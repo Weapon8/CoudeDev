@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>CoudeDev</AssemblyName>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>toltem.ico</ApplicationIcon>
+    <!-- Options de publication (single-file self-contained) passées en ligne de commande,
+         PAS ici, pour qu'un Build/F5 ne recopie pas tout le runtime .NET. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="toltem.ico" />
+  </ItemGroup>
+
+</Project>
