@@ -42,8 +42,9 @@ namespace CoudeDev
             public double LongueurBrasExt = 250;   // longueur extrados (extérieur) du bras, mm
             public int NdivDev = 160;
             public int NbTracage = 12;
-            public double RecouvFemelle = 20;
-            public double RecouvMale = 35;
+            public double RecBoutFemelle = 20;   // recouvrement au bout femelle (mm)
+            public double RecJoint       = 25;   // recouvrement au joint (mm)
+            public double RecBoutMale    = 35;   // recouvrement au bout mâle (mm)
         }
 
         // Longueur extrados (heel, θ=0) du bout femelle pour un Rm donné.
@@ -171,8 +172,7 @@ namespace CoudeDev
         /// <summary>Développés à plat de toutes les viroles.</summary>
         public static List<Gore> BuildElbow(Params p)
         {
-            var specs = Specs(p, out double Ltot, out double alpha, out _);
-            double Rec(double s) => p.RecouvFemelle + (p.RecouvMale - p.RecouvFemelle) * (s / Ltot);
+            var specs = Specs(p, out _, out double alpha, out _);
 
             var gores = new List<Gore>();
             int N = specs.Count, mid = 0;
@@ -184,11 +184,16 @@ namespace CoudeDev
                 Normalize(F2, M2);
                 string nm = sp.Name;
                 if (nm == "INTERMEDIAIRE") nm = $"INTERMEDIAIRE {++mid}";
+                // Recouvrement dégradé : bout femelle 20→joint 25, bout mâle 25→35
+                double recF, recM;
+                if (k == 0)           { recF = p.RecBoutFemelle; recM = p.RecJoint;     } // bout femelle
+                else if (k == N - 1)  { recF = p.RecJoint;       recM = p.RecBoutMale;  } // bout mâle
+                else                  { recF = p.RecJoint;       recM = p.RecJoint;     } // intermédiaires
                 gores.Add(new Gore {
                     Female = F2, Male = M2, Name = nm, Qty = 1,
                     HeelIndex = 0, ThroatIndex = p.NdivDev / 2,
                     Width = (F2[F2.Length - 1] - F2[0]).Norm(),
-                    SeamRecF = Rec(sp.Sf), SeamRecM = Rec(sp.Sm)
+                    SeamRecF = recF, SeamRecM = recM
                 });
             }
             return gores;

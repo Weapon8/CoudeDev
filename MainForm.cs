@@ -11,12 +11,21 @@ namespace CoudeDev
     {
         readonly TableLayoutPanel root = new();
         readonly Panel inputs = new();
-        readonly DBPanel preview = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(30,30,34) };
+        readonly DBPanel preview = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(20,24,31) };
 
         sealed class DBPanel : Panel { public DBPanel(){ DoubleBuffered = true; } }
 
-        TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecM;
-        Button btnView;
+        // === Thème standard TolTem ===
+        static readonly Color ACCENT = Color.FromArgb(255,122,26);   // #FF7A1A orange accent
+        static readonly Color PANEL  = Color.FromArgb(27,32,39);     // #1B2027 fond panneau gauche
+        static readonly Color INPUT  = Color.FromArgb(38,44,53);     // #262C35 champs de saisie
+        static readonly Color CANVAS = Color.FromArgb(20,24,31);     // #14181F zone de dessin
+        static readonly Color FG     = Color.FromArgb(230,235,240);  // #E6EBF0 texte
+        static readonly Color BTN    = Color.FromArgb(43,49,59);     // #2B313B bouton secondaire
+        static readonly Color INK    = Color.FromArgb(18,21,27);     // texte sombre sur orange
+
+        TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecJ, tRecM;
+        Button btn2D, btn3D;
         Label lblInfo;
         List<Gore> _gores = new();
         List<Band3D> _bands3d = new();
@@ -28,9 +37,18 @@ namespace CoudeDev
 
         public MainForm()
         {
+            // --- Base d'autoscale DPI ---
+            // Form dessinee a 96 dpi (Segoe UI 9pt = 7x15). AutoScaleMode.Font scale ENSEMBLE
+            // les Left/Top/Width absolus + la police vers 120/144 dpi (125%/150%) et l'inverse
+            // a 80%. Combine au PerMonitorV2 du csproj -> re-scale net quand on glisse la
+            // fenetre vers un ecran de scaling different. A poser AVANT toute creation de controle.
+            AutoScaleDimensions = new SizeF(7f, 15f);
+            AutoScaleMode = AutoScaleMode.Font;
+
+            SuspendLayout();
             Text = "Développé Coude Emboîtable Mâle/Femelle  —  Made with love by weapon pour TolTem";
             Width = 1180; Height = 780; StartPosition = FormStartPosition.CenterScreen;
-            BackColor = Color.FromArgb(45,45,48); ForeColor = Color.Gainsboro;
+            BackColor = PANEL; ForeColor = FG;
             Font = new Font("Segoe UI", 9);
             try {
                 var asm = System.Reflection.Assembly.GetExecutingAssembly();
@@ -46,7 +64,22 @@ namespace CoudeDev
 
             inputs.Dock = DockStyle.Fill; inputs.AutoScroll = true;
             root.Controls.Add(inputs, 0, 0);
-            root.Controls.Add(preview, 1, 0);
+
+            // --- Conteneur droite : barre de vue (haut) + zone de dessin (remplissage) ---
+            var rightPanel = new Panel{ Dock = DockStyle.Fill, BackColor = CANVAS };
+            preview.Dock = DockStyle.Fill;
+            rightPanel.Controls.Add(preview);     // fill (ajouté en premier => au fond)
+
+            var viewBar = new Panel{ Dock = DockStyle.Top, Height = 42, BackColor = CANVAS };
+            btn2D = MakeSeg("Développé 2D", 8,  130);
+            btn3D = MakeSeg("Vue 3D",      146, 110);
+            btn2D.Click += (s,e)=>SetView(false);
+            btn3D.Click += (s,e)=>SetView(true);
+            viewBar.Controls.Add(btn2D);
+            viewBar.Controls.Add(btn3D);
+            rightPanel.Controls.Add(viewBar);     // top (ajouté après => réserve le haut)
+
+            root.Controls.Add(rightPanel, 1, 0);
             preview.Paint += Preview_Paint;
             preview.Resize += (s,e)=>preview.Invalidate();
             preview.MouseDown += (s,e)=>{ if(_show3D){_dragging=true;_lastMouse=e.Location;} };
@@ -56,10 +89,10 @@ namespace CoudeDev
                     _lastMouse=e.Location; preview.Invalidate(); } };
 
             int y = 12;
-            void Header(string t){ var l=new Label{Text=t,Left=12,Top=y,Width=270,Font=new Font("Segoe UI",9,FontStyle.Bold),ForeColor=Color.FromArgb(120,180,255)}; inputs.Controls.Add(l); y+=24; }
+            void Header(string t){ var l=new Label{Text=t,Left=12,Top=y,Width=270,Font=new Font("Segoe UI",9,FontStyle.Bold),ForeColor=ACCENT}; inputs.Controls.Add(l); y+=24; }
             TextBox Field(string lbl,string val){
-                var l=new Label{Text=lbl,Left=12,Top=y+3,Width=150}; inputs.Controls.Add(l);
-                var t=new TextBox{Left=168,Top=y,Width=110,Text=val,BackColor=Color.FromArgb(60,60,64),ForeColor=Color.White,BorderStyle=BorderStyle.FixedSingle};
+                var l=new Label{Text=lbl,Left=12,Top=y+3,Width=150,ForeColor=FG}; inputs.Controls.Add(l);
+                var t=new TextBox{Left=168,Top=y,Width=110,Text=val,BackColor=INPUT,ForeColor=Color.White,BorderStyle=BorderStyle.FixedSingle};
                 t.TextChanged+=(s,e)=>Recalc(); inputs.Controls.Add(t); y+=30; return t;
             }
 
@@ -71,32 +104,58 @@ namespace CoudeDev
 
             Header("EMBOÎTEMENT");
             tRed   = Field("Réduction mâle (mm circ)", "25");
-            tRecF  = Field("Recouvrement femelle (mm)", "20");
-            tRecM  = Field("Recouvrement mâle (mm)", "35");
+            tRecF  = Field("Recouv. bout femelle (mm)", "20");
+            tRecJ  = Field("Recouv. au joint (mm)", "25");
+            tRecM  = Field("Recouv. bout mâle (mm)", "35");
 
             Header("DÉVELOPPÉ / DXF");
             tNdiv  = Field("Divisions développé", "160");
             tTrac  = Field("Nb génératrices tracées", "12");
 
             y+=6;
-            btnView=new Button{Text="Vue 3D",Left=12,Top=y,Width=130,Height=34,
-                BackColor=Color.FromArgb(70,70,75),ForeColor=Color.White,FlatStyle=FlatStyle.Flat};
-            btnView.FlatAppearance.BorderSize=0;
-            btnView.Click+=(s,e)=>{ _show3D=!_show3D; btnView.Text=_show3D?"Vue à plat":"Vue 3D"; preview.Invalidate(); };
-            inputs.Controls.Add(btnView);
-            var btnGen=new Button{Text="Générer DXF",Left=148,Top=y,Width=130,Height=34,
-                BackColor=Color.FromArgb(0,120,215),ForeColor=Color.White,FlatStyle=FlatStyle.Flat,Font=new Font("Segoe UI",9.5f,FontStyle.Bold)};
-            btnGen.FlatAppearance.BorderSize=0; btnGen.Click+=Generate; inputs.Controls.Add(btnGen);
-            y+=44;
+            var btnGen=new Button{Text="⤓  Exporter le DXF",Left=12,Top=y,Width=276,Height=36,
+                BackColor=ACCENT,ForeColor=INK,FlatStyle=FlatStyle.Flat,
+                Font=new Font("Segoe UI",10.5f,FontStyle.Bold)};
+            btnGen.FlatAppearance.BorderSize=0;
+            btnGen.FlatAppearance.MouseOverBackColor=Color.FromArgb(255,140,55);
+            btnGen.FlatAppearance.MouseDownBackColor=Color.FromArgb(225,100,15);
+            btnGen.Click+=Generate; inputs.Controls.Add(btnGen);
+            y+=46;
 
-            lblInfo=new Label{Left=12,Top=y,Width=276,Height=150,ForeColor=Color.Gainsboro,Font=new Font("Consolas",8.5f)};
+            lblInfo=new Label{Left=12,Top=y,Width=276,Height=150,ForeColor=FG,Font=new Font("Consolas",8.5f)};
             inputs.Controls.Add(lblInfo);
 
             var lblSign=new Label{Left=12,Top=y+150,Width=280,Height=20,Text=SIGN,
-                ForeColor=Color.FromArgb(150,150,170),Font=new Font("Segoe UI",8.5f,FontStyle.Italic|FontStyle.Bold)};
+                ForeColor=Color.FromArgb(140,140,145),Font=new Font("Segoe UI",8.5f,FontStyle.Italic|FontStyle.Bold)};
             inputs.Controls.Add(lblSign);
 
+            ResumeLayout(false);
+            SetView(false);
             Recalc();
+        }
+
+        // Bouton de la barre segmentée (style pilule plate)
+        Button MakeSeg(string txt, int left, int width)
+        {
+            var b = new Button{
+                Text=txt, Left=left, Top=6, Width=width, Height=30,
+                FlatStyle=FlatStyle.Flat, Font=new Font("Segoe UI",9f,FontStyle.Bold) };
+            b.FlatAppearance.BorderSize=1;
+            return b;
+        }
+
+        // Bascule 2D / 3D : l'onglet actif passe en orange plein
+        void SetView(bool show3d)
+        {
+            _show3D = show3d;
+            void Style(Button b, bool active){
+                b.BackColor = active ? ACCENT : BTN;
+                b.ForeColor = active ? INK : FG;
+                b.FlatAppearance.BorderColor = active ? ACCENT : Color.FromArgb(70,78,90);
+            }
+            if (btn2D != null) Style(btn2D, !show3d);
+            if (btn3D != null) Style(btn3D, show3d);
+            preview.Invalidate();
         }
 
         bool TryD(TextBox t, out double v) =>
@@ -107,13 +166,14 @@ namespace CoudeDev
             try
             {
                 if(!TryD(tDiam,out var d)||!TryD(tAngle,out var a)||!TryD(tRatio,out var r)||
-                   !TryD(tRed,out var red)||!TryD(tRecF,out var rf)||!TryD(tRecM,out var rm)) return;
+                   !TryD(tRed,out var red)||!TryD(tRecF,out var rf)||!TryD(tRecJ,out var rj)||!TryD(tRecM,out var rm)) return;
                 int nb=int.TryParse(tNb.Text,out var n)?Math.Max(2,n):2;
                 int nd=int.TryParse(tNdiv.Text,out var x)?Math.Max(24,x):160;
                 int tr=int.TryParse(tTrac.Text,out var tt)?Math.Max(2,tt):12;
                 _p=new ElbowGeometry.Params{
                     Diametre=d, AngleTotal=a, NbSegments=nb, LongueurBrasExt=r,
-                    Reduction=red, NdivDev=nd, NbTracage=tr, RecouvFemelle=rf, RecouvMale=rm };
+                    Reduction=red, NdivDev=nd, NbTracage=tr,
+                    RecBoutFemelle=rf, RecJoint=rj, RecBoutMale=rm };
                 _gores=ElbowGeometry.BuildElbow(_p);
                 _bands3d=ElbowGeometry.BuildElbow3D(_p);
 
@@ -123,7 +183,7 @@ namespace CoudeDev
                     $"Ø femelle : {d:0.0}  →  Ø mâle : {maleD:0.0}\n"+
                     $"Circ. femelle : {Math.PI*d:0.0} mm\n"+
                     $"Circ. mâle    : {Math.PI*d-red:0.0} mm\n"+
-                    $"Recouvrement  : {rf:0} → {rm:0} mm dégradé\n"+
+                    $"Recouvrement : femelle {rf:0} → joint {rj:0} → mâle {rm:0} mm\n"+
                     $"Éléments : {nb}  (glisser = tourner la 3D)";
                 preview.Invalidate();
             }
@@ -133,7 +193,7 @@ namespace CoudeDev
         void Preview_Paint(object? sender, PaintEventArgs e)
         {
             var g=e.Graphics; g.SmoothingMode=SmoothingMode.AntiAlias;
-            g.Clear(Color.FromArgb(30,30,34));
+            g.Clear(CANVAS);
             if(_gores.Count==0) return;
             if(_show3D) Draw3D(g); else DrawFlat(g);
         }
@@ -142,28 +202,62 @@ namespace CoudeDev
 
         void DrawFlat(Graphics g)
         {
-            var bb=new List<(double mnx,double mxx,double mny,double mxy)>();
-            double maxW=1, totH=0, pad=_p.Diametre*0.22+25;
-            foreach(var go in _gores){
+            V2 norm(V2 v){double n=v.Norm();return n<1e-9?new V2(0,0):v*(1.0/n);}
+
+            // bbox réelle d'un développé, recouvrement couture INCLUS (= encombrement tôle)
+            (double mnx,double mxx,double mny,double mxy) RealBox(Gore go){
                 double mnx=1e18,mxx=-1e18,mny=1e18,mxy=-1e18;
-                foreach(var pt in go.Female){mnx=Math.Min(mnx,pt.X);mxx=Math.Max(mxx,pt.X);mny=Math.Min(mny,pt.Y);mxy=Math.Max(mxy,pt.Y);}
-                foreach(var pt in go.Male){mnx=Math.Min(mnx,pt.X);mxx=Math.Max(mxx,pt.X);mny=Math.Min(mny,pt.Y);mxy=Math.Max(mxy,pt.Y);}
-                mxx += Math.Max(go.SeamRecF,go.SeamRecM)+8;          // place pour le recouvrement
-                bb.Add((mnx,mxx,mny,mxy));
-                maxW=Math.Max(maxW,mxx-mnx); totH+=(mxy-mny)+pad;
+                void Acc(V2 p){mnx=Math.Min(mnx,p.X);mxx=Math.Max(mxx,p.X);mny=Math.Min(mny,p.Y);mxy=Math.Max(mxy,p.Y);}
+                foreach(var p in go.Female) Acc(p);
+                foreach(var p in go.Male)   Acc(p);
+                V2 fE=go.Female[go.Female.Length-1], mE=go.Male[go.Male.Length-1];
+                V2 tF=norm(fE-go.Female[go.Female.Length-2]), tM=norm(mE-go.Male[go.Male.Length-2]);
+                Acc(fE+tF*go.SeamRecF); Acc(mE+tM*go.SeamRecM);
+                return (mnx,mxx,mny,mxy);
             }
-            double sc=Math.Min((preview.Width-50)/maxW,(preview.Height-110)/totH);
+
+            var boxes=new List<(double mnx,double mxx,double mny,double mxy)>();
+            double maxW=1, totH=0;
+            foreach(var go in _gores){ var b=RealBox(go); boxes.Add(b);
+                maxW=Math.Max(maxW,b.mxx-b.mnx); totH+=(b.mxy-b.mny); }
+
+            // marges écran fixes pour loger titres + cotes
+            const float LEFT=34, RIGHT=78, TOP=74, BOT=14, TITLEGAP=16, COTEGAP=34;
+            int nEl=_gores.Count;
+            double availW=preview.Width-LEFT-RIGHT;
+            double availH=preview.Height-TOP-BOT-nEl*(TITLEGAP+COTEGAP);
+            double sc=Math.Min(availW/maxW, availH/Math.Max(1,totH));
+            if(sc<=0) sc=0.05;
 
             var penCut=new Pen(Color.White,1.3f); var penTrac=new Pen(Color.FromArgb(160,120,210),0.7f);
             var penRep=new Pen(Color.FromArgb(90,160,255),1.5f); var penRec=new Pen(Color.FromArgb(80,200,120),1f);
             var br=new SolidBrush(Color.Gainsboro); var fnt=new Font("Segoe UI",8);
             var brRec=new SolidBrush(Color.FromArgb(120,210,150));
-            V2 norm(V2 v){double n=v.Norm();return n<1e-9?new V2(0,0):v*(1.0/n);}
+            // cotation (cyan, calque COTATION ACI4)
+            var penDim=new Pen(Color.FromArgb(95,200,215),1f); var brDim=new SolidBrush(Color.FromArgb(155,225,235));
+            var fntDim=new Font("Segoe UI",8f);
 
-            double cyTop=74;
+            void HDim(float x1,float x2,float yl,double mm){
+                g.DrawLine(penDim,x1,yl,x2,yl);
+                g.DrawLine(penDim,x1,yl-4,x1,yl+4); g.DrawLine(penDim,x2,yl-4,x2,yl+4);
+                string s=$"{mm:0} mm"; var sz=g.MeasureString(s,fntDim);
+                g.DrawString(s,fntDim,brDim,(x1+x2)/2-sz.Width/2,yl+2);
+            }
+            void VDim(float y1,float y2,float xl,double mm){
+                g.DrawLine(penDim,xl,y1,xl,y2);
+                g.DrawLine(penDim,xl-4,y1,xl+4,y1); g.DrawLine(penDim,xl-4,y2,xl+4,y2);
+                string s=$"{mm:0} mm"; var sz=g.MeasureString(s,fntDim);
+                var st=g.Save(); g.TranslateTransform(xl+6,(y1+y2)/2); g.RotateTransform(-90);
+                g.DrawString(s,fntDim,brDim,-sz.Width/2,0); g.Restore(st);
+            }
+
+            double cy=TOP;
             for(int gi=0;gi<_gores.Count;gi++){
-                var go=_gores[gi]; var b=bb[gi];
-                PointF P(V2 v)=>new PointF((float)(25+(v.X-b.mnx)*sc),(float)(cyTop+(b.mxy-v.Y)*sc));
+                var go=_gores[gi]; var b=boxes[gi];
+                double w=b.mxx-b.mnx, h=b.mxy-b.mny;
+                float top=(float)(cy+TITLEGAP);
+                PointF P(V2 v)=>new PointF((float)(LEFT+(v.X-b.mnx)*sc),(float)(top+(b.mxy-v.Y)*sc));
+
                 var pts=new List<PointF>();
                 foreach(var v in go.Female)pts.Add(P(v));
                 for(int i=go.Male.Length-1;i>=0;i--)pts.Add(P(go.Male[i]));
@@ -172,7 +266,7 @@ namespace CoudeDev
                 for(int i=step;i<go.Female.Length-1;i+=step) g.DrawLine(penTrac,P(go.Female[i]),P(go.Male[i]));
                 g.DrawLine(penRep,P(go.Female[go.HeelIndex]),P(go.Male[go.HeelIndex]));
                 g.DrawLine(penRep,P(go.Female[go.ThroatIndex]),P(go.Male[go.ThroatIndex]));
-                // recouvrement dégradé
+                // recouvrement dégradé (femelle 20→25, mâle 25→35)
                 V2 fE=go.Female[go.Female.Length-1], mE=go.Male[go.Male.Length-1];
                 V2 tF=norm(fE-go.Female[go.Female.Length-2]), tM=norm(mE-go.Male[go.Male.Length-2]);
                 V2 fO=fE+tF*go.SeamRecF, mO=mE+tM*go.SeamRecM;
@@ -181,13 +275,23 @@ namespace CoudeDev
                 g.DrawPolygon(penRec,rec);
                 g.DrawString($"{go.SeamRecF:0}",fnt,brRec,P(fO).X+2,P(fO).Y-6);
                 g.DrawString($"{go.SeamRecM:0}",fnt,brRec,P(mO).X+2,P(mO).Y-6);
-                g.DrawString($"{go.Name}  x{go.Qty}",fnt,br,25,(float)cyTop-15);
-                cyTop += (b.mxy-b.mny)*sc + pad*sc;
+
+                // titre + encombrement + superficie
+                g.DrawString($"{go.Name}  x{go.Qty}    —    {w:0} × {h:0} mm   ({w*h/1e6:0.00} m²)",
+                    fnt,br,LEFT,(float)cy);
+
+                // cotes extérieures (encombrement recouvrement inclus)
+                float sx1=LEFT, sx2=(float)(LEFT+w*sc), sy1=top, sy2=(float)(top+h*sc);
+                HDim(sx1,sx2,sy2+16,w);   // largeur dev (circonférence + lap) en bas
+                VDim(sy1,sy2,sx2+18,h);   // hauteur dev à droite
+
+                cy = top + h*sc + COTEGAP;
             }
+
             // Signature EN HAUT + légende (lignes séparées)
             g.DrawString(SIGN,new Font("Segoe UI",9,FontStyle.Italic|FontStyle.Bold),
                 new SolidBrush(Color.FromArgb(150,150,165)),20,6);
-            g.DrawString("Blanc=DÉCOUPE   Violet=TRAÇAGE   Bleu=REPÈRE   Vert=RECOUVREMENT dégradé",
+            g.DrawString("Blanc=DÉCOUPE   Violet=TRAÇAGE   Bleu=REPÈRE   Vert=RECOUVREMENT couture   Cyan=COTES encombrement",
                 fnt,new SolidBrush(Color.Gray),20,26);
         }
 
