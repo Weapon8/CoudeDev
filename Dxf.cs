@@ -13,6 +13,8 @@ namespace CoudeDev
     /// Calque DECOUPE = un seul contour fermé continu (LWPOLYLINE à bulges = vrais arcs
     /// tangents), recouvrement inclus : c'est la "ligne continue" que Metalix / AutoPunch
     /// grignote d'un trait (même format que TronconiqueDeporte).
+    /// + trous repère (CIRCLE sur DECOUPE, rond standard) : nb trous = n° de pièce, dans la
+    ///   patte côté mâle -> la pièce reste identifiable une fois poinçonnée, sans traçage.
     /// Traçage / repères / textes : en option, sur leurs propres calques.
     /// </summary>
     public static class DxfWriter
@@ -93,6 +95,12 @@ namespace CoudeDev
                     if (v.Bulge != 0.0) P(42, v.Bulge.ToString("0.##########", C));
                 }
             }
+            // Trou repère : cercle plein -> Metalix / AutoPunch lui affecte le rond de même Ø.
+            void Circle(string layer, V2 c, double r)
+            {
+                P(0, "CIRCLE"); P(5, Hx()); P(100, "AcDbEntity"); P(8, layer); P(100, "AcDbCircle");
+                P(10, c.X); P(20, c.Y); P(30, 0.0); P(40, r);
+            }
             void Text(string layer, double x, double y, string txt, double h)
             {
                 P(0, "TEXT"); P(5, Hx()); P(100, "AcDbEntity"); P(8, layer); P(100, "AcDbText");
@@ -147,8 +155,18 @@ namespace CoudeDev
                 // --- Contour DECOUPE : un seul trait continu, patte de recouvrement comprise ---
                 PolyBulge(L_DECOUPE, g.Contour, off, true);
 
+                // --- Trous repère (poinçonnés avec le contour) : nb = n° de pièce, patte côté mâle ---
+                foreach (var c in g.Trous) Circle(L_DECOUPE, Tr(c), g.TrouDiam / 2);
+
                 if (annot)
                 {
+                    if (g.Trous.Count > 0)
+                    {
+                        V2 tl = Tr(g.Trous[g.Trous.Count - 1]);
+                        int nt = g.Trous.Count;
+                        Text(L_INFOS, tl.X - 52, tl.Y + 6, $"{nt} trou{(nt > 1 ? "s" : "")} = P{g.PartNo}", 4);
+                    }
+
                     // Couture d'origine = bord recouvert (ligne de pose), PAS une découpe
                     Line(L_RECOUV, Tr(g.SeamF), Tr(g.SeamM));
                     V2 fF = Tr(g.FlapF), fM = Tr(g.FlapM);
@@ -176,7 +194,20 @@ namespace CoudeDev
                     Text(L_INFOS, 0, -32,
                         $"dev femelle {ElbowGeometry.DevFemelle(p):0.#} mm" + (p.AlignFourreau ? " (bareme fourreaux)" : " (pi x D + recouv.)") +
                         $" - dev male {ElbowGeometry.DevMale(p):0.#} mm", 5);
-                    Text(L_INFOS, 0, -41, "Made with love by weapon pour TolTem", 4);
+                    double ys = -41;
+                    if (p.CoudeContreCoude)
+                    {
+                        Text(L_INFOS, 0, ys,
+                            $"COUDE CONTRE COUDE (Z) : deport {p.Deport:0} mm - hauteur {ElbowGeometry.HauteurZ(p):0} mm - emboit. {p.EmboitementZ:0} - chaque piece x2, 2e coude tourne de 180°", 5);
+                        ys -= 9;
+                    }
+                    if (p.TrousRepere)
+                    {
+                        Text(L_INFOS, 0, ys,
+                            $"REPERE : nb de trous = n° de piece (1 = femelle, {nParts} = male) - dans la patte, cote male - Ø{p.TrouDiam:0.#}", 5);
+                        ys -= 9;
+                    }
+                    Text(L_INFOS, 0, ys, "Made with love by weapon pour TolTem", 4);
                 }
 
                 P(0, "ENDSEC"); P(0, "EOF");

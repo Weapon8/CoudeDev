@@ -51,10 +51,22 @@ namespace CoudeDev
         public double MaxDev;                        // écart maxi mesuré contour / courbe exacte (mm)
         public double ArcMiniApplique;               // arc mini réellement tenu (= ArcMini sauf si impossible)
         public double TolAppliquee;                  // tolérance réellement utilisée (> TolArc si montée auto)
+
+        // --- Trous repère (calque DECOUPE, CIRCLE) : nb = n° de pièce, dans la patte, côté MÂLE ---
+        public List<V2> Trous = new();               // centres des trous (vide si option décochée)
+        public double TrouDiam;                      // Ø des trous (mm)
+        public string? TrouAlerte;                   // non null si le code n'a pas pu être posé tel quel
+        public List<V2> TrousTS = new();             // les mêmes sur le cône : X = θ de la génératrice, Y = distance au bord bas (3D)
     }
 
     /// <summary>Bande 3D assemblée (bague femelle + bague mâle dans le repère du coude).</summary>
-    public class Band3D { public V3[] Fem = Array.Empty<V3>(); public V3[] Mal = Array.Empty<V3>(); }
+    public class Band3D
+    {
+        public V3[] Fem = Array.Empty<V3>(); public V3[] Mal = Array.Empty<V3>();
+        public V3 SeamN;                                // normale extérieure à la couture (θ = 0, génératrice Fem[0]-Mal[0])
+        public V3[] Trous = Array.Empty<V3>();          // trous repère (posés sur la patte, 1 mm au-dessus)
+        public V3[] TrousN = Array.Empty<V3>();         // normales extérieures des trous
+    }
 
     /// <summary>
     /// Barème atelier FOURREAUX galva/zinc (même tableau que ep-fourreaux.html du hub) :
@@ -113,6 +125,26 @@ namespace CoudeDev
             /// (rond de 20 à l'atelier). Aucun arc plus court au DXF, pour que Metalix les grignote tous.</summary>
             public double ArcMini        = 20;
 
+            /// <summary>Trous repère poinçonnés au rond standard (pas besoin d'outil de marquage) :
+            /// nombre de trous = n° de pièce (P1 femelle = 1 ... PN mâle = N), toujours dans la patte
+            /// de recouvrement, côté MÂLE de la virole. Une fois roulé, l'autre bord les recouvre.</summary>
+            public bool TrousRepere      = true;
+            /// <summary>Ø des trous repère (mm) = rond de la tourelle (rond de 6 à l'atelier).</summary>
+            public double TrouDiam       = 6;
+            /// <summary>Centre du 1er trou à X mm du bout de patte (le long du bord) et du bord côté mâle.</summary>
+            public double TrouBord       = 10;
+            /// <summary>Entraxe des trous suivants, empilés le long de la génératrice (mm).</summary>
+            public double TrouPas        = 15;
+
+            /// <summary>Coude contre coude (dévoiement en Z / S, ex. descente EP) : 2 coudes IDENTIQUES,
+            /// le 2e tourné de 180° autour de son axe et emboîté sur le mâle du 1er. Le rayon de cintrage
+            /// (donc le bras ext.) est CALCULÉ pour tenir le déport voulu ; LongueurBrasExt est alors ignoré.</summary>
+            public bool CoudeContreCoude = false;
+            /// <summary>Déport = distance entre l'axe d'entrée et l'axe de sortie (parallèles), mm.</summary>
+            public double Deport         = 300;
+            /// <summary>Longueur d'emboîtement du mâle du coude 1 dans la femelle du coude 2 (mm).</summary>
+            public double EmboitementZ   = 30;
+
             /// <summary>Déviation de l'axe = angle dont tourne le tube = 180 - angle réel.</summary>
             public double Deviation => 180.0 - AngleReel;
         }
@@ -144,10 +176,23 @@ namespace CoudeDev
             if (p.RecBoutFemelle < 0 || p.RecJoint < 0 || p.RecBoutMale < 0) return "Recouvrements >= 0.";
             if (!(CircFemelle(p) > 0.5 * Math.PI * p.Diametre)) return "Recouvrement femelle trop grand pour ce développé.";
             if (p.Reduction < 0 || p.Reduction >= CircFemelle(p) * 0.5) return "Réduction mâle hors limites.";
-            if (!(p.LongueurBrasExt > 0)) return "Longueur bras ext. > 0.";
+            if (p.CoudeContreCoude)
+            {
+                if (!(p.Deport > 0)) return "Coude contre coude : déport > 0.";
+                if (!(p.EmboitementZ >= 0)) return "Coude contre coude : emboîtement ≥ 0.";
+                if (!(RmPourDeport(p) > RFem(p) + 0.5))
+                    return $"Déport trop petit pour 2 coudes l'un contre l'autre.\nMini ≈ {DeportMini(p) + 1:0} mm à cet angle\n(angle réel plus ouvert = déport mini plus petit).";
+            }
+            else if (!(p.LongueurBrasExt > 0)) return "Longueur bras ext. > 0.";
             if (!(p.TolArc >= 0.01 && p.TolArc <= 2)) return "Tolérance contour : entre 0,01 et 2 mm.";
             if (!(p.TolArcMax >= p.TolArc && p.TolArcMax <= 2)) return "Tolérance maxi : entre la tolérance contour et 2 mm.";
             if (!(p.ArcMini >= 0 && p.ArcMini <= 500)) return "Arc mini : entre 0 et 500 mm.";
+            if (p.TrousRepere)
+            {
+                if (!(p.TrouDiam >= 1 && p.TrouDiam <= 30)) return "Ø trou repère : entre 1 et 30 mm.";
+                if (!(p.TrouBord >= p.TrouDiam / 2 + 1)) return $"Trou repère : distance au bord ≥ {p.TrouDiam / 2 + 1:0.#} mm (Ø/2 + 1).";
+                if (!(p.TrouPas >= p.TrouDiam + 1)) return $"Entraxe trous repère ≥ {p.TrouDiam + 1:0.#} mm (Ø + 1).";
+            }
             double Rm = SolveRm(p);
             if (Rm <= RFem(p) + 0.5)
                 return $"Gorge nulle ou négative : bras ext. trop court.\nMini ≈ {BrasExtMini(p) + 1:0} mm pour ces réglages.";
@@ -176,9 +221,50 @@ namespace CoudeDev
             return (F0 - M0).Norm();
         }
 
+        // ---- Coude contre coude (Z) ----
+        // Axe d'un coude = polyligne de N tronçons (Lend, Lint..., Lend) proportionnels à Rm.
+        // Renvoie Σ (L_k/Rm)·cos(kφ) et Σ (L_k/Rm)·sin(kφ) : avancée axiale / latérale d'UN coude pour Rm = 1.
+        static (double C1, double S1) AxeUnitaire(Params p)
+        {
+            int N = Math.Max(2, p.NbSegments);
+            double al = AlphaRad(p), phi = 2 * al, t = Math.Tan(al), C = 0, S = 0;
+            for (int k = 0; k < N; k++)
+            {
+                double l = (k == 0 || k == N - 1) ? t : 2 * t;
+                C += l * Math.Cos(k * phi); S += l * Math.Sin(k * phi);
+            }
+            return (C, S);
+        }
+        static double DevRad(Params p) => p.Deviation * Math.PI / 180.0;
+
+        /// <summary>Déport obtenu avec 2 coudes de rayon d'axe Rm, l'un contre l'autre :
+        /// 2·Rm·S1 (les 2 coudes) − emboîtement·sin(déviation) (le coude 2 recule le long du joint).</summary>
+        public static double DeportZ(Params p, double Rm) =>
+            2 * Rm * AxeUnitaire(p).S1 - p.EmboitementZ * Math.Sin(DevRad(p));
+
+        /// <summary>Rayon d'axe qui donne exactement le déport voulu (formule fermée : le déport est linéaire en Rm).</summary>
+        public static double RmPourDeport(Params p)
+        {
+            double S1 = AxeUnitaire(p).S1;
+            return S1 < 1e-9 ? 0 : (p.Deport + p.EmboitementZ * Math.Sin(DevRad(p))) / (2 * S1);
+        }
+
+        /// <summary>Déport mini en coude contre coude (gorge nulle au bout femelle).</summary>
+        public static double DeportMini(Params p) => DeportZ(p, RFem(p) + 0.5);
+
+        /// <summary>Hauteur du dévoiement = distance axiale entre le centre de l'entrée (femelle coude 1)
+        /// et le centre de la sortie (mâle coude 2).</summary>
+        public static double HauteurZ(Params p) =>
+            2 * SolveRm(p) * AxeUnitaire(p).C1 - p.EmboitementZ * Math.Cos(DevRad(p));
+
+        /// <summary>Longueur extrados du bras correspondant au rayon utilisé (calculée en mode Z).</summary>
+        public static double BrasExtCalcule(Params p) => HeelFemelle(p, SolveRm(p));
+
         // Trouve Rm pour que l'extrados du bras = LongueurBrasExt (bissection).
+        // En coude contre coude : Rm vient directement du déport.
         static double SolveRm(Params p)
         {
+            if (p.CoudeContreCoude) return Math.Max(0.5, RmPourDeport(p));
             double al = AlphaRad(p);
             double lo = 0.5, hi = p.LongueurBrasExt / Math.Max(1e-3, Math.Tan(al)) + p.Diametre + 10;
             for (int it = 0; it < 60; it++)
@@ -353,8 +439,16 @@ namespace CoudeDev
                 int arcs = 0, lines = 0;
                 foreach (var v in cont) { if (v.Bulge != 0) arcs++; else lines++; }
 
+                // Trous repère : P(k+1) = k+1 trous, dans la patte côté mâle (bord bas)
+                var trous = new List<V2>(); string? trouMsg = null;
+                if (p.TrousRepere && p.TrouDiam > 0)
+                    trouMsg = PlaceTrous(fT, fB, tB, thM, recM, F2[nd], M2[nd], fT(thF), fB(thM), k + 1, p, trous);
+                // mêmes trous en coordonnées cône (θ de la génératrice, distance au bord bas) pour la vue 3D
+                var trousTS = new List<V2>();
+                foreach (var c in trous) trousTS.Add(ToCone(fT, fB, TWO_PI, Math.Max(thF, thM) + 0.05, c));
+
                 gores.Add(new Gore {
-                    Female = F2, Male = M2, Name = nm, Tag = tag, PartNo = k + 1, Qty = 1,
+                    Female = F2, Male = M2, Name = nm, Tag = tag, PartNo = k + 1, Qty = p.CoudeContreCoude ? 2 : 1,
                     HeelIndex = 0, ThroatIndex = nd / 2,
                     Width = (F2[nd] - F2[0]).Norm(),
                     DevHaut = ArcLen(tT, 0, thF), DevBas = ArcLen(tB, 0, thM),
@@ -366,7 +460,8 @@ namespace CoudeDev
                     MinArcLen = Math.Min(stH.MinLen, stB.MinLen),
                     MaxDev = Math.Max(stH.MaxDev, stB.MaxDev),
                     ArcMiniApplique = Math.Min(stH.UsedMin, stB.UsedMin),
-                    TolAppliquee = Math.Max(stH.UsedTol, stB.UsedTol)
+                    TolAppliquee = Math.Max(stH.UsedTol, stB.UsedTol),
+                    Trous = trous, TrouDiam = p.TrouDiam, TrouAlerte = trouMsg, TrousTS = trousTS
                 });
             }
             return gores;
@@ -378,6 +473,84 @@ namespace CoudeDev
             const int n = 2000; double h = (t1 - t0) / n, s = tf(t0).Norm() + tf(t1).Norm();
             for (int i = 1; i < n; i++) s += (i % 2 == 1 ? 4 : 2) * tf(t0 + i * h).Norm();
             return Math.Abs(s * h / 3);
+        }
+
+        // ------------------------------------------------------------------
+        //  Trous repère (pas de poinçon de marquage à l'atelier) : on code la pièce
+        //  avec des ronds standard, dans la PATTE de recouvrement, côté MÂLE (bord bas).
+        //   - colonne de trous PARALLÈLE au bout de patte, à "bord" mm de lui : tous les
+        //     trous restent à 10 mm du bord même si la patte se rétrécit en montant
+        //     (mâle : 35 en bas -> 25 en haut) ;
+        //   - 1er trou à "bord" mm du bord bas, suivants à "pas" d'entraxe vers le haut ;
+        //   - nombre de trous = n° de pièce (P1 femelle = 1 ... PN mâle = N).
+        //  Contrôles : chaque trou doit être ENTIÈREMENT au-delà de la couture d'origine
+        //  (θ = 2π) => recouvert par l'autre bord une fois roulé (pas de trou traversant),
+        //  et garder ≥ 1 mm de matière jusqu'au bout de patte.
+        //  Renvoie null si OK, sinon un message (trou recentré / code incomplet).
+        // ------------------------------------------------------------------
+        static string? PlaceTrous(Func<double, V2> fT, Func<double, V2> fB, Func<double, V2> tB,
+                                  double thM, double rec, V2 seamF, V2 seamM, V2 flapF, V2 flapM,
+                                  int count, Params p, List<V2> outC)
+        {
+            double r = p.TrouDiam / 2, along = p.TrouBord;
+            string? msg = null;
+            // patte trop étroite pour 10 mm : on recentre le trou dans la patte
+            if (rec - along < r + 1) { along = rec / 2; msg = $"trou recentré dans la patte de {rec:0} mm"; }
+            if (along < r + 1) return $"patte de {rec:0} mm trop étroite pour un trou Ø{p.TrouDiam:0.#} : pas de repère";
+
+            // distances signées : >0 côté patte pour la couture, >0 côté pièce pour le bout de patte
+            static double Side(V2 q, V2 a0, V2 a1, V2 inside)
+            {
+                V2 t = (a1 - a0).Unit();
+                double s = V2.Cross(t, q - a0);
+                return V2.Cross(t, inside - a0) >= 0 ? s : -s;
+            }
+            V2 flapMid = (flapF + flapM) * 0.5, seamMid = (seamF + seamM) * 0.5;
+
+            // pied de colonne sur le bord bas : à "along" mm du coin de patte (Newton sur la longueur d'arc)
+            double th = thM - along / Math.Max(1e-9, tB(thM).Norm());
+            for (int it = 0; it < 5; it++)
+                th += (ArcLen(tB, th, thM) - along) / Math.Max(1e-9, tB(th).Norm());
+            V2 foot = fB(th);
+
+            // colonne parallèle au bout de patte (bas -> haut), recalée à "along" pile du bout de patte
+            V2 u = (flapF - flapM).Unit();
+            V2 nIn = new V2(-u.Y, u.X);
+            if (V2.Dot(nIn, seamMid - flapM) < 0) nIn = nIn * -1;     // normale vers l'intérieur de la pièce
+            foot = foot + nIn * (along - Side(foot, flapM, flapF, seamMid));
+            double H = (flapF - flapM).Norm();                         // hauteur dispo le long du bout de patte
+
+            int placed = 0;
+            for (int j = 0; j < count; j++)
+            {
+                double h = p.TrouBord + j * p.TrouPas;
+                V2 c = foot + u * h;
+                bool ok = h + r <= H - 1
+                       && Side(c, seamM, seamF, flapMid) >= r + 1     // recouvert une fois roulé
+                       && Side(c, flapM, flapF, seamMid) >= r + 1;    // matière jusqu'au bout de patte
+                if (!ok) break;
+                outC.Add(c); placed++;
+            }
+            if (placed < count)
+                msg = $"{placed}/{count} trous seulement : CODE FAUX (+ de recouvrement ou - d'entraxe)";
+            return msg;
+        }
+
+        // Point du développé -> (θ de sa génératrice, distance au bord bas le long de celle-ci).
+        // Les génératrices sont des droites en éventail : bissection sur le côté où tombe le point.
+        // Le développé étant isométrique, la distance à plat = la distance sur la tôle roulée.
+        static V2 ToCone(Func<double, V2> fT, Func<double, V2> fB, double lo, double hi, V2 c)
+        {
+            double Side(double t) { V2 a = fB(t); return V2.Cross(fT(t) - a, c - a); }
+            double slo = Side(lo);
+            for (int it = 0; it < 60; it++)
+            {
+                double mid = 0.5 * (lo + hi), sm = Side(mid);
+                if (Math.Sign(sm) == Math.Sign(slo)) { lo = mid; slo = sm; } else hi = mid;
+            }
+            double tc = 0.5 * (lo + hi);
+            V2 a0 = fB(tc), d = (fT(tc) - a0).Unit();
+            return new V2(tc, V2.Dot(c - a0, d));
         }
 
         // Échantillonne une arête développée (courbe exacte + tangentes exactes) et la
@@ -442,8 +615,10 @@ namespace CoudeDev
             return mx;
         }
 
-        /// <summary>Modèle 3D assemblé du coude (tube conique mitré).</summary>
-        public static List<Band3D> BuildElbow3D(Params p)
+        /// <summary>Modèle 3D assemblé du coude (tube conique mitré). Avec les développés (gores),
+        /// les trous repère sont posés en 3D. En coude contre coude : + le 2e coude, tourné de 180°
+        /// autour de son axe et emboîté sur le mâle du 1er (dévoiement en Z).</summary>
+        public static List<Band3D> BuildElbow3D(Params p, List<Gore>? gores = null)
         {
             var specs = Specs(p, out _, out double alpha, out double phi);
             int N = specs.Count;
@@ -460,12 +635,53 @@ namespace CoudeDev
 
             for (int k = 0; k < N; k++)
             {
-                var (F, M) = Gore3D(specs[k], alpha, p.NdivDev);
+                var sp = specs[k];
+                var (F, M) = Gore3D(sp, alpha, p.NdivDev);
                 V3 C = (P[k] + P[k + 1]) * 0.5;
-                V3 Apply(V3 v) => h[k] * v.X + new V3(0, v.Y, 0) + (u[k] * (-v.Z)) + C; // x->h, y->y, z->-u
+                V3 Rot(V3 v) => h[k] * v.X + new V3(0, v.Y, 0) + (u[k] * (-v.Z));    // x->h, y->y, z->-u
+                V3 Apply(V3 v) => Rot(v) + C;
                 var Fg = new V3[F.Length]; var Mg = new V3[M.Length];
                 for (int i = 0; i < F.Length; i++) { Fg[i] = Apply(F[i]); Mg[i] = Apply(M[i]); }
-                bands.Add(new Band3D { Fem = Fg, Mal = Mg });
+
+                // normale extérieure du cône ρ = m·z + b : (cos θ, sin θ, −m)
+                double m = (sp.Rf - sp.r) / sp.L;
+                V3 Nrm(double th) { var n = new V3(Math.Cos(th), Math.Sin(th), -m); return n * (1 / n.Norm()); }
+                var band = new Band3D { Fem = Fg, Mal = Mg, SeamN = Rot(Nrm(0)) };
+
+                // trous repère : (θ, distance au bord bas) -> point de la génératrice, 1 mm au-dessus (patte)
+                if (gores != null && k < gores.Count && gores[k].TrousTS.Count > 0)
+                {
+                    double aT = sp.SqT ? 0 : alpha, aB = sp.SqB ? 0 : alpha;
+                    var tl = new List<V3>(); var tn = new List<V3>();
+                    foreach (var ts in gores[k].TrousTS)
+                    {
+                        V3 B = SolveZ(sp.Rf, sp.r, sp.L, aB, ts.X, false), T = SolveZ(sp.Rf, sp.r, sp.L, aT, ts.X, true);
+                        V3 d = T - B, n = Nrm(ts.X);
+                        tl.Add(Apply(B + d * (ts.Y / d.Norm()) + n * 1.0));
+                        tn.Add(Rot(n));
+                    }
+                    band.Trous = tl.ToArray(); band.TrousN = tn.ToArray();
+                }
+                bands.Add(band);
+            }
+
+            if (p.CoudeContreCoude)
+            {
+                // Coude 2 = coude 1 tourné de 180° autour de son axe d'entrée (X), puis orienté
+                // sur la sortie du coude 1 (rotation de la déviation dans le plan XZ) et
+                // emboîté sur son mâle (recul de l'emboîtement le long du joint).
+                double be = (N - 1) * phi, cb = Math.Cos(be), sb = Math.Sin(be);
+                V3 Rz(V3 v) { double x = v.X, y = -v.Y, z = -v.Z; return new V3(x * cb + z * sb, y, -x * sb + z * cb); }
+                V3 O2 = P[N] - u[N - 1] * p.EmboitementZ;
+                V3[] Map(V3[] a) { var r = new V3[a.Length]; for (int i = 0; i < a.Length; i++) r[i] = Rz(a[i]) + O2; return r; }
+                V3[] MapN(V3[] a) { var r = new V3[a.Length]; for (int i = 0; i < a.Length; i++) r[i] = Rz(a[i]); return r; }
+                int n1 = bands.Count;
+                for (int k = 0; k < n1; k++)
+                {
+                    var b = bands[k];
+                    bands.Add(new Band3D { Fem = Map(b.Fem), Mal = Map(b.Mal), SeamN = Rz(b.SeamN),
+                                           Trous = Map(b.Trous), TrousN = MapN(b.TrousN) });
+                }
             }
             return bands;
         }

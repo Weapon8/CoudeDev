@@ -27,7 +27,9 @@ namespace CoudeDev
         static readonly Color WARN   = Color.FromArgb(255,110,90);   // message d'erreur
 
         TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecJ, tRecM, tTol, tTolMax, tArcMini;
-        CheckBox chkAnnot, chkFourreau;
+        TextBox tTrouD, tTrouB, tTrouP, tDeport, tEmbZ;
+        CheckBox chkAnnot, chkFourreau, chkTrous;
+        RadioButton rbNormal, rbZ;
         Button btn2D, btn3D;
         Label lblInfo;
         List<Gore> _gores = new();
@@ -134,6 +136,37 @@ namespace CoudeDev
             inputs.Controls.Add(chkAnnot); y+=28;
             Hint("décoché = contour DECOUPE seul (fichier machine)");
 
+            Header("REPÈRE MÂLE / FEMELLE (trous)");
+            chkTrous = new CheckBox{ Text="Trous repère dans la patte", Left=12, Top=y, Width=276, Height=22,
+                ForeColor=FG, Checked=true };
+            chkTrous.CheckedChanged+=(s,e)=>{ _recalcTimer.Stop(); Recalc(); };
+            inputs.Controls.Add(chkTrous); y+=28;
+            Hint("nb trous = n° pièce · côté mâle · cachés au roulage");
+            tTrouD = Field("Ø trou repère (mm)", "6");
+            tTrouB = Field("Trou à X mm des bords", "10");
+            tTrouP = Field("Entraxe trous (mm)", "15");
+
+            // --- Cadre COUDE CONTRE COUDE (dévoiement en Z) ---
+            y+=8;
+            var grpZ = new GroupBox{ Text="COUDE CONTRE COUDE (Z / dévoiement)", Left=8, Top=y, Width=282, Height=176,
+                ForeColor=ACCENT, Font=new Font("Segoe UI",9,FontStyle.Bold) };
+            var fReg = new Font("Segoe UI",9);
+            rbNormal = new RadioButton{ Text="Coude normal", Left=10, Top=22, Width=260, Height=22, ForeColor=FG, Font=fReg, Checked=true };
+            rbZ      = new RadioButton{ Text="Coude contre coude (2 coudes en Z)", Left=10, Top=44, Width=262, Height=22, ForeColor=FG, Font=fReg };
+            grpZ.Controls.Add(rbNormal); grpZ.Controls.Add(rbZ);
+            TextBox FieldZ(string lbl,string val,int top){
+                var l=new Label{Text=lbl,Left=10,Top=top+3,Width=150,ForeColor=FG,Font=fReg}; grpZ.Controls.Add(l);
+                var t=new TextBox{Left=162,Top=top,Width=110,Text=val,BackColor=INPUT,ForeColor=Color.White,BorderStyle=BorderStyle.FixedSingle,Font=fReg};
+                t.TextChanged+=(s,e)=>{ _recalcTimer.Stop(); _recalcTimer.Start(); }; grpZ.Controls.Add(t); return t;
+            }
+            tDeport = FieldZ("Déport entre axes (mm)", "300", 74);
+            tEmbZ   = FieldZ("Emboîtement coudes (mm)", "30", 104);
+            grpZ.Controls.Add(new Label{ Text="2 coudes identiques, le 2e tourné de 180°.\nBras ext. calculé pour tenir le déport.",
+                Left=10, Top=134, Width=266, Height=34, ForeColor=Color.FromArgb(140,148,160), Font=new Font("Segoe UI",8f,FontStyle.Italic) });
+            rbZ.CheckedChanged+=(s,e)=>{ ApplyMode(); _recalcTimer.Stop(); Recalc(); };
+            inputs.Controls.Add(grpZ);
+            y+=grpZ.Height+4;
+
             y+=6;
             var btnGen=new Button{Text="⤓  Exporter les DXF (1 par pièce)",Left=12,Top=y,Width=276,Height=36,
                 BackColor=ACCENT,ForeColor=INK,FlatStyle=FlatStyle.Flat,
@@ -144,17 +177,26 @@ namespace CoudeDev
             btnGen.Click+=Generate; inputs.Controls.Add(btnGen);
             y+=46;
 
-            lblInfo=new Label{Left=12,Top=y,Width=276,Height=290,ForeColor=FG,Font=new Font("Consolas",8.5f)};
+            lblInfo=new Label{Left=12,Top=y,Width=276,Height=440,ForeColor=FG,Font=new Font("Consolas",8.5f)};
             inputs.Controls.Add(lblInfo);
 
-            var lblSign=new Label{Left=12,Top=y+294,Width=280,Height=20,Text=SIGN,
+            var lblSign=new Label{Left=12,Top=y+444,Width=280,Height=20,Text=SIGN,
                 ForeColor=Color.FromArgb(140,140,145),Font=new Font("Segoe UI",8.5f,FontStyle.Italic|FontStyle.Bold)};
             inputs.Controls.Add(lblSign);
 
             _recalcTimer.Tick += (s,e)=>{ _recalcTimer.Stop(); Recalc(); };
             ResumeLayout(false);
+            ApplyMode();
             SetView(false);
             Recalc();
+        }
+
+        // Coude normal : bras ext. saisi. Coude contre coude : bras ext. calculé depuis le déport.
+        void ApplyMode()
+        {
+            bool z = rbZ.Checked;
+            tRatio.Enabled = !z;
+            tDeport.Enabled = z; tEmbZ.Enabled = z;
         }
 
         // Bouton de la barre segmentée (style pilule plate)
@@ -190,7 +232,9 @@ namespace CoudeDev
             {
                 if(!TryD(tDiam,out var d)||!TryD(tAngle,out var a)||!TryD(tRatio,out var r)||
                    !TryD(tRed,out var red)||!TryD(tRecF,out var rf)||!TryD(tRecJ,out var rj)||!TryD(tRecM,out var rm)||
-                   !TryD(tTol,out var tol)||!TryD(tTolMax,out var tolMax)||!TryD(tArcMini,out var amini)) return;
+                   !TryD(tTol,out var tol)||!TryD(tTolMax,out var tolMax)||!TryD(tArcMini,out var amini)||
+                   !TryD(tTrouD,out var trD)||!TryD(tTrouB,out var trB)||!TryD(tTrouP,out var trP)||
+                   !TryD(tDeport,out var dep)||!TryD(tEmbZ,out var embZ)) return;
                 int nb=int.TryParse(tNb.Text,out var n)?Math.Max(2,n):2;
                 int nd=int.TryParse(tNdiv.Text,out var x)?Math.Max(24,x):160;
                 int tr=int.TryParse(tTrac.Text,out var tt)?Math.Max(2,tt):12;
@@ -199,7 +243,9 @@ namespace CoudeDev
                     Reduction=red, NdivDev=nd, NbTracage=tr,
                     RecBoutFemelle=rf, RecJoint=rj, RecBoutMale=rm,
                     TolArc=tol, TolArcMax=tolMax, ArcMini=amini,
-                    AlignFourreau=chkFourreau.Checked };
+                    AlignFourreau=chkFourreau.Checked,
+                    TrousRepere=chkTrous.Checked, TrouDiam=trD, TrouBord=trB, TrouPas=trP,
+                    CoudeContreCoude=rbZ.Checked, Deport=dep, EmboitementZ=embZ };
 
                 _err = ElbowGeometry.Validate(_p);
                 if (_err != null)
@@ -212,7 +258,7 @@ namespace CoudeDev
                 }
 
                 _gores=ElbowGeometry.BuildElbow(_p);
-                _bands3d=ElbowGeometry.BuildElbow3D(_p);
+                _bands3d=ElbowGeometry.BuildElbow3D(_p,_gores);
 
                 double phi=(_p.Deviation*Math.PI/180.0)/(nb-1), alpha=phi/2;
                 double cF=ElbowGeometry.CircFemelle(_p), cM=ElbowGeometry.CircMale(_p);
@@ -223,6 +269,29 @@ namespace CoudeDev
                     lmin=Math.Min(lmin,g.MinArcLen); dev=Math.Max(dev,g.MaxDev); tenu=Math.Min(tenu,g.ArcMiniApplique); tolU=Math.Max(tolU,g.TolAppliquee); }
                 bool abaisse = tenu < amini - 0.01;
                 bool montee  = tolU > tol + 1e-6;
+                // trous repère : résumé + alertes par pièce
+                string trous = "";
+                bool trouFaux = false;
+                if (_p.TrousRepere)
+                {
+                    int N = _gores.Count;
+                    trous = $"\nRepère : P1=1 trou … P{N}={N} trous Ø{trD:0.#}\n"+
+                            $"  patte côté mâle, {trB:0.#}/{trB:0.#}, pas {trP:0.#}";
+                    foreach(var g in _gores)
+                        if(g.TrouAlerte!=null){
+                            bool faux = g.Trous.Count != g.PartNo;
+                            trouFaux |= faux;
+                            trous += $"\n{(faux?"⚠":"•")} P{g.PartNo} : {g.TrouAlerte}";
+                        }
+                }
+                else trous = "\nRepère : trous désactivés";
+                string zz = _p.CoudeContreCoude
+                    ? $"\nCOUDE CONTRE COUDE (2 coudes)\n"+
+                      $"  déport {dep:0} · hauteur {ElbowGeometry.HauteurZ(_p):0} mm\n"+
+                      $"  bras ext calculé {ElbowGeometry.BrasExtCalcule(_p):0} mm\n"+
+                      $"  pièces ×2 · 2e coude à 180°\n"+
+                      $"  → coutures opposées"
+                    : "";
                 lblInfo.ForeColor = FG;
                 lblInfo.Text =
                     $"Angle réel : {a:0.##}°  →  déviation {_p.Deviation:0.##}°\n"+
@@ -237,11 +306,13 @@ namespace CoudeDev
                     $"  plus court {lmin:0} mm · écart ≤ {dev:0.00} mm\n"+
                     $"  tangents (cassure {kink:0.##}°), 4 coins\n"+
                     $"Export : {_gores.Count} DXF (P1 femelle → P{_gores.Count} mâle)"+
+                    zz+
+                    trous+
                     (montee && !abaisse ? $"\n• tolérance montée à {tolU:0.##} mm\n  pour tenir l'arc mini {amini:0} mm" : "")+
                     (abaisse ? $"\n⚠ arc mini {amini:0} impossible même à\n  {tolU:0.##} mm → plus court {lmin:0} mm.\n  Monte la tolérance maxi ou ajoute\n  un élément." : "")+
                     (_p.AlignFourreau && Math.Abs(rf-BaremeFourreaux.Recouvrement(d))>0.01
                         ? $"\n⚠ barème prévu avec recouv. F {BaremeFourreaux.Recouvrement(d):0} mm" : "");
-                if (abaisse) lblInfo.ForeColor = Color.FromArgb(255,190,90);
+                if (abaisse || trouFaux) lblInfo.ForeColor = Color.FromArgb(255,190,90);
                 preview.Invalidate();
             }
             catch { }
@@ -293,6 +364,8 @@ namespace CoudeDev
             using var brRec=new SolidBrush(Color.FromArgb(120,210,150));
             using var fillRec=new SolidBrush(Color.FromArgb(45,80,200,120));
             using var brNode=new SolidBrush(Color.FromArgb(150,ACCENT));
+            using var penHole=new Pen(ACCENT,1.6f); using var brHole=new SolidBrush(ACCENT);
+            using var brCanvas=new SolidBrush(CANVAS);
             // cotation (cyan, calque COTATION ACI4)
             using var penDim=new Pen(Color.FromArgb(95,200,215),1f); using var brDim=new SolidBrush(Color.FromArgb(155,225,235));
             using var fntDim=new Font("Segoe UI",8f);
@@ -335,10 +408,20 @@ namespace CoudeDev
                 g.DrawPolygon(penCut,PA(go.ContourPts));
                 foreach(var v in go.Contour){ var q=P(v.P); g.FillEllipse(brNode,q.X-1.6f,q.Y-1.6f,3.2f,3.2f); }
 
+                // trous repère (poinçonnés avec le contour) : nb = n° de pièce, patte côté mâle
+                if(go.Trous.Count>0){
+                    float rp=Math.Max(2.5f,(float)(go.TrouDiam/2*sc));
+                    foreach(var c in go.Trous){ var q=P(c);
+                        g.FillEllipse(brCanvas,q.X-rp,q.Y-rp,2*rp,2*rp); g.DrawEllipse(penHole,q.X-rp,q.Y-rp,2*rp,2*rp); }
+                    int nt=go.Trous.Count; var ql=P(go.Trous[nt-1]);
+                    string st=$"{nt} trou{(nt>1?"s":"")}"; var sz=g.MeasureString(st,fnt);
+                    g.DrawString(st,fnt,brHole,ql.X-rp-6-sz.Width,ql.Y-sz.Height/2);
+                }
+
                 // titre + encombrement + superficie
                 string dev = go.Tag=="FEMELLE" ? $"dév. bord femelle {go.DevHaut:0.#} mm    —    "
                            : go.Tag=="MALE"    ? $"dév. bord mâle {go.DevBas:0.#} mm    —    " : "";
-                g.DrawString($"P{go.PartNo}  {go.Name}    —    {dev}encombr. {w:0} × {h:0} ({w*h/1e6:0.00} m²)    —    {go.ArcCount} arcs, plus court {go.MinArcLen:0} mm",
+                g.DrawString($"P{go.PartNo}  {go.Name}{(go.Qty>1?$"  ×{go.Qty}":"")}    —    {dev}encombr. {w:0} × {h:0} ({w*h/1e6:0.00} m²)    —    {go.ArcCount} arcs, plus court {go.MinArcLen:0} mm",
                     fnt,br,LEFT,(float)cy);
 
                 // cotes extérieures (encombrement recouvrement inclus)
@@ -353,7 +436,7 @@ namespace CoudeDev
             using var fSign=new Font("Segoe UI",9,FontStyle.Italic|FontStyle.Bold);
             using var bSign=new SolidBrush(Color.FromArgb(150,150,165)); using var bGray=new SolidBrush(Color.Gray);
             g.DrawString(SIGN,fSign,bSign,20,6);
-            g.DrawString("Blanc=DÉCOUPE (arcs tangents, points orange = jonctions)   Violet=TRAÇAGE   Bleu=REPÈRE   Vert=RECOUVREMENT   Cyan=COTES",
+            g.DrawString("Blanc=DÉCOUPE (arcs tangents, points orange = jonctions)   Rond orange=TROU REPÈRE   Violet=TRAÇAGE   Bleu=REPÈRE   Vert=RECOUVREMENT   Cyan=COTES",
                 fnt,bGray,20,26);
         }
 
@@ -415,6 +498,26 @@ namespace CoudeDev
                 using(var pen=new Pen(k==0?Color.FromArgb(90,170,255):Color.FromArgb(160,160,170),1.6f)) g.DrawLines(pen,fpts);
                 using(var pen=new Pen(k==B-1?Color.FromArgb(80,200,120):Color.FromArgb(160,160,170),1.6f)) g.DrawLines(pen,mpts);
             }
+            // 3) coutures (θ = 0, extrados) + trous repère : nets si face à l'écran, coutures cachées en pointillé
+            double Facing(V3 at, V3 n){ var a=PR(at); var b=PR(at+n*10); return b.d-a.d; }
+            float rTrou=Math.Max(2.5f,(float)(_p.TrouDiam/2*sc));
+            using(var penSeamF=new Pen(Color.FromArgb(80,200,120),2.2f))
+            using(var penSeamB=new Pen(Color.FromArgb(110,80,200,120),1.2f){ DashStyle=DashStyle.Dash })
+            using(var penTrou=new Pen(ACCENT,1.8f))
+            using(var brTrou=new SolidBrush(CANVAS))
+            for(int k=0;k<B;k++){
+                var bd=bands[k];
+                V3 s0=bd.Fem[0], s1=bd.Mal[0];
+                bool front=Facing((s0+s1)*0.5,bd.SeamN)>0;
+                var p0=PR(s0); var p1=PR(s1);
+                g.DrawLine(front?penSeamF:penSeamB,SC(p0.x,p0.y),SC(p1.x,p1.y));
+                for(int i=0;i<bd.Trous.Length;i++){
+                    if(Facing(bd.Trous[i],bd.TrousN[i])<=0) continue;
+                    var q=PR(bd.Trous[i]); var c=SC(q.x,q.y);
+                    g.FillEllipse(brTrou,c.X-rTrou,c.Y-rTrou,2*rTrou,2*rTrou);
+                    g.DrawEllipse(penTrou,c.X-rTrou,c.Y-rTrou,2*rTrou,2*rTrou);
+                }
+            }
             // textes
             using var fSign=new Font("Segoe UI",9,FontStyle.Italic|FontStyle.Bold);
             using var bSign=new SolidBrush(Color.FromArgb(150,150,165));
@@ -425,7 +528,9 @@ namespace CoudeDev
             g.DrawString("● P1 FEMELLE (Ø exact)",f,bFem,20,28);
             g.DrawString("● P"+_gores.Count+" MÂLE (−"+_p.Reduction.ToString("0")+"mm circ)",f,bMal,190,28);
             g.DrawString($"Angle réel {_p.AngleReel:0.##}°  (déviation {_p.Deviation:0.##}°)",f,bAcc,20,48);
-            g.DrawString("glisser pour tourner",f,bGray,20,preview.Height-22);
+            if(_p.CoudeContreCoude)
+                g.DrawString($"COUDE CONTRE COUDE : déport {_p.Deport:0} mm · hauteur {ElbowGeometry.HauteurZ(_p):0} mm · 2e coude tourné de 180°",f,bAcc,20,68);
+            g.DrawString("glisser pour tourner     ─ vert = couture (extrados)     ○ orange = trous repère",f,bGray,20,preview.Height-22);
         }
 
         void Generate(object? sender, EventArgs e)
@@ -438,7 +543,8 @@ namespace CoudeDev
             }
             using var sfd=new SaveFileDialog{Filter="DXF (*.dxf)|*.dxf", OverwritePrompt=false,
                 Title="Nom de base — 1 DXF par pièce (_P1_FEMELLE, _P2_MALE…)",
-                FileName=$"Coude_{_p.AngleReel.ToString("0.#",CultureInfo.InvariantCulture)}deg_D{_p.Diametre:0}_{_p.NbSegments}el.dxf"};
+                FileName=(_p.CoudeContreCoude?$"CoudeZ_dep{_p.Deport:0}_":"Coude_")+
+                         $"{_p.AngleReel.ToString("0.#",CultureInfo.InvariantCulture)}deg_D{_p.Diametre:0}_{_p.NbSegments}el.dxf"};
             if(sfd.ShowDialog()!=DialogResult.OK)return;
             try{
                 var paths=DxfWriter.PartPaths(sfd.FileName,_gores);
@@ -451,7 +557,9 @@ namespace CoudeDev
                 var files=DxfWriter.WriteParts(sfd.FileName,_gores,_p,chkAnnot.Checked);
                 var lst=new List<string>(); foreach(var x in files) lst.Add("  "+Path.GetFileName(x));
                 MessageBox.Show($"{files.Count} DXF générés dans :\n{Path.GetDirectoryName(files[0])}\n\n"+string.Join("\n",lst)+
-                    (chkAnnot.Checked?"\n\n(avec traçage / repères / textes)":"\n\n(contour DECOUPE seul)"),
+                    (chkAnnot.Checked?"\n\n(avec traçage / repères / textes)":"\n\n(contour DECOUPE seul)")+
+                    (_p.CoudeContreCoude?$"\n\nCOUDE CONTRE COUDE : chaque pièce ×2 (2 coudes identiques),\nle 2e coude tourné de 180° → coutures à l'opposé. Déport {_p.Deport:0} mm.":"")+
+                    (_p.TrousRepere?$"\n\nTrous repère Ø{_p.TrouDiam:0.#} : nb trous = n° de pièce (1 = femelle, {_gores.Count} = mâle),\ndans la patte côté mâle. Il faut le rond de {_p.TrouDiam:0.#} dans la tourelle.":""),
                     "OK",MessageBoxButtons.OK,MessageBoxIcon.Information);
             }catch(Exception ex){MessageBox.Show("Erreur : "+ex.Message);}
         }
