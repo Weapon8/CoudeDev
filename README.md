@@ -67,6 +67,63 @@ courbe** du bord (une fois roulée, elle tombe pile sur le début de la virole, 
 dépasser de l'onglet). La couture d'origine (bord recouvert) n'est qu'une ligne de
 pose sur le calque RECOUVREMENT (option).
 
+## Trous repère mâle / femelle (v1.4)
+Une fois poinçonnée, la pièce perd tous ses traçages : les apprentis / intérims ne savent plus
+quelle virole est la femelle, laquelle est le mâle, ni où est la patte. Pas de poinçon de
+marquage à l'atelier → on code la pièce avec le **rond standard (Ø6)**, poinçonné avec le contour :
+- **nombre de trous = n° de la pièce** : P1 FEMELLE = 1 trou, P2 = 2 trous … PN MÂLE = N trous
+  (le mâle = celle qui a le plus de trous, intermédiaires onglet/onglet compris en 3 éléments et plus) ;
+- trous **toujours dans la patte de recouvrement** → le côté troué = la patte ;
+- trous **toujours côté MÂLE de la virole** (bord bas) → le bord près des trous va vers le mâle ;
+- 1er trou à **10 mm du bout de patte et 10 mm du bord côté mâle**, suivants empilés vers le haut
+  à **15 mm d'entraxe** sur une colonne parallèle au bout de patte (tous restent à 10 mm du bord,
+  même quand la patte se rétrécit en montant, ex. mâle 35 → 25) ;
+- une fois roulé, l'autre bord recouvre les trous (chaque trou est contrôlé ENTIÈREMENT au-delà
+  de la couture d'origine, + 1 mm) : **pas de trou traversant**.
+
+Ex. Ø200 / 90° / 2 éléments : P1 femelle = 1 trou dans la patte de 25 (côté onglet),
+P2 mâle = 2 trous dans la patte de 35 (côté bout mâle).
+
+Réglages : case « Trous repère dans la patte », Ø trou, distance aux bords, entraxe.
+Si la patte est trop étroite pour 10 mm, le trou est recentré dans la patte (signalé) ; si un
+trou ne tient pas (patte trop petite, pièce trop basse), c'est signalé en orange : **code faux**.
+Dans le DXF : `CIRCLE` sur le calque **DECOUPE** → Metalix / AutoPunch y met le rond du même Ø
+(il faut ce rond dans la tourelle).
+
+## Coude contre coude — dévoiement en Z (v1.4)
+Cadre « COUDE CONTRE COUDE » en bas du panneau : choix **Coude normal** / **Coude contre coude**.
+Deux coudes **identiques** montés l'un contre l'autre (ex. dévoiement de descente EP sous
+débord de toit) : le 2e est **tourné de 180°** autour de son axe et **emboîté** sur le mâle du 1er.
+Les axes d'entrée et de sortie sont parallèles, décalés du **déport**.
+- Saisies : **déport entre axes** (mm) et **emboîtement** du mâle dans la femelle (mm, 30 par défaut),
+  + Ø, angle réel, nombre d'éléments comme d'habitude.
+- Le **rayon de cintrage est calculé** pour tenir le déport (le bras ext. saisi est grisé) :
+  `déport = 2·Rm·Σ(Lk/Rm)·sin(k·φ) − emboîtement·sin(déviation)` — linéaire en Rm, formule fermée.
+  Affichés : bras ext. calculé, **hauteur** du dévoiement (entrée → sortie, le long de l'axe).
+- Déport trop petit (gorge nulle) : erreur avec le **déport mini** pour cet angle
+  (un angle réel plus ouvert donne un déport mini plus petit).
+- Export : les **mêmes DXF** qu'un coude seul, quantité **×2** (même code de trous : P1 = 1 trou…).
+- Montage : coutures des 2 coudes **à l'opposé** (180°). Vue 3D : les 2 coudes en Z, coutures en
+  vert, trous repère en orange.
+
+### En 2 parties ou en 3 parties (S d'une pièce)
+Le cadre propose 3 choix : **Coude normal**, **En 2 parties : 2 coudes emboîtés** (ci-dessus),
+**En 3 parties : S, élément central** (le libellé suit le nombre d'éléments : 2N−1 parties).
+- Le mâle du coude 1 et la femelle du coude 2 **fusionnent en une virole centrale** de longueur
+  2·Lend, à **onglets opposés** (talon du haut à 0°, talon du bas à 180°). À plat, ses deux bords
+  ondulent dans le même sens : une **bande en vague de hauteur constante** (une intermédiaire
+  normale, elle, est en tonneau). Ex. 2 éléments : P1 FEMELLE, P2 CENTRE, P3 MÂLE.
+- **Cône continu** de la femelle au mâle sur tout le S, **pas d'emboîtement** au milieu (champ grisé) ;
+  même axe, donc même déport et même hauteur qu'en 2 coudes, l'emboîtement en moins.
+- **Couture sur le côté** (fibre neutre, 90° du plan du coude) : elle reste alignée d'un bout à
+  l'autre du S, comme sur un dévoiement du commerce. Talon et gorge sont tracés en REPÈRE (option).
+- Chaque pièce ×1. Code des trous : P1 = 1 trou … P(2N−1) = 2N−1 trous ; le premier trou est à 10 mm
+  du bord bas mesuré **perpendiculairement** (le bord est incliné quand la couture est sur le côté).
+  Si la pièce est trop basse pour l'entraxe saisi, l'entraxe est **resserré** (jusqu'à Ø + 3) pour
+  garder le bon nombre de trous ; sinon alerte « CODE FAUX ».
+- Validé en cylindre : les bagues de chaque joint coïncident à 0,000 mm et la couture est une
+  droite continue ; en conique, écart d'onglet habituel du cône (~1 % du Ø).
+
 ## Pièces générées — 1 fichier DXF par pièce
 Le nom choisi à l'export sert de base :
 1. `base_P1_FEMELLE.dxf` — **BOUT FEMELLE**, bord droit = développé barème fourreaux (ou πD), bord onglet au joint.
@@ -76,12 +133,12 @@ Le nom choisi à l'export sert de base :
 En 2 éléments : `P1_FEMELLE` + `P2_MALE`. Chaque pièce est posée coin bas-gauche en 0,0.
 
 ## Calques DXF (convention tube / Metalix)
-Par défaut le fichier ne contient **que DECOUPE** (fichier machine propre).
+Par défaut le fichier ne contient **que DECOUPE** (fichier machine propre : contour + trous repère).
 Case « DXF : + traçage / repères / textes » pour ajouter les autres calques :
 
 | Calque        | ACI | Usage                                           |
 |---------------|-----|-------------------------------------------------|
-| DECOUPE       | 7   | contour de découpe continu (arcs tangents)      |
+| DECOUPE       | 7   | contour de découpe continu (arcs tangents) + trous repère (CIRCLE) |
 | RECOUVREMENT  | 3   | couture d'origine = ligne de pose de la patte   |
 | TRACAGE       | 6   | génératrices                                    |
 | REPERE        | 5   | repère gorge (intrados) ; le talon = bord de couture |

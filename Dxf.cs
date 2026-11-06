@@ -179,8 +179,10 @@ namespace CoudeDev
                     for (int i = step; i < n; i += step)
                         if (i != g.ThroatIndex) Line(L_TRACAGE, Tr(g.Female[i]), Tr(g.Male[i]));
 
-                    // Repères : talon (extrados) = bord de couture θ=0 (déjà découpé) ; gorge (intrados) tracée
+                    // Repères : talon (extrados) = bord de couture θ=0 (déjà découpé) ; gorge (intrados) tracée.
+                    // S d'une pièce : couture sur le côté -> le talon est tracé aussi.
                     Line(L_REPERE, Tr(g.Female[g.ThroatIndex]), Tr(g.Male[g.ThroatIndex]));
+                    if (g.HeelIndex != 0) Line(L_REPERE, Tr(g.Female[g.HeelIndex]), Tr(g.Male[g.HeelIndex]));
                     V2 tH = Tr(g.Female[g.HeelIndex]), tG = Tr(g.Female[g.ThroatIndex]);
                     Text(L_INFOS, tH.X + 2, tH.Y - 8, "TALON", 5);
                     Text(L_INFOS, tG.X + 2, tG.Y - 8, "GORGE", 5);
@@ -197,8 +199,9 @@ namespace CoudeDev
                     double ys = -41;
                     if (p.CoudeContreCoude)
                     {
-                        Text(L_INFOS, 0, ys,
-                            $"COUDE CONTRE COUDE (Z) : deport {p.Deport:0} mm - hauteur {ElbowGeometry.HauteurZ(p):0} mm - emboit. {p.EmboitementZ:0} - chaque piece x2, 2e coude tourne de 180°", 5);
+                        Text(L_INFOS, 0, ys, p.ZUnePiece
+                            ? $"COUDE CONTRE COUDE en 1 piece (S, element central) : deport {p.Deport:0} mm - hauteur {ElbowGeometry.HauteurZ(p):0} mm - {nParts} viroles - couture sur le cote"
+                            : $"COUDE CONTRE COUDE (Z) : deport {p.Deport:0} mm - hauteur {ElbowGeometry.HauteurZ(p):0} mm - emboit. {p.EmboitementZ:0} - chaque piece x2, 2e coude tourne de 180°", 5);
                         ys -= 9;
                     }
                     if (p.TrousRepere)

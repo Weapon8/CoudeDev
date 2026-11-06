@@ -144,6 +144,11 @@ namespace CoudeDev
             public double Deport         = 300;
             /// <summary>Longueur d'emboîtement du mâle du coude 1 dans la femelle du coude 2 (mm).</summary>
             public double EmboitementZ   = 30;
+            /// <summary>Coude contre coude en UNE pièce (S, élément central) : le mâle du coude 1 et la
+            /// femelle du coude 2 fusionnent en une virole centrale à onglets OPPOSÉS -> 2N−1 viroles
+            /// (3 en 2 éléments), cône continu de bout en bout, couture sur le côté (alignée sur tout le S).
+            /// false = 2 coudes séparés emboîtés (chaque pièce ×2).</summary>
+            public bool ZUnePiece        = false;
 
             /// <summary>Déviation de l'axe = angle dont tourne le tube = 180 - angle réel.</summary>
             public double Deviation => 180.0 - AngleReel;
@@ -212,6 +217,7 @@ namespace CoudeDev
             double al = AlphaRad(p);
             double Lend = Rm * Math.Tan(al), Lint = 2 * Rm * Math.Tan(al);
             double Ltot = 2 * Lend + (N - 2) * Lint;
+            if (UnePiece(p)) Ltot = 2 * Lend + (2 * N - 3) * Lint;    // S d'une pièce : le cône court sur tout le S
             if (Ltot < 1e-6) return 0;
             double Rfem = RFem(p);
             double Rmal = RMal(p);
@@ -237,16 +243,25 @@ namespace CoudeDev
         }
         static double DevRad(Params p) => p.Deviation * Math.PI / 180.0;
 
+        /// <summary>S d'une pièce (élément central) : true. 2 coudes emboîtés ou coude normal : false.</summary>
+        public static bool UnePiece(Params p) => p.CoudeContreCoude && p.ZUnePiece;
+        // Emboîtement réellement appliqué : seulement entre 2 coudes séparés (pas dans un S d'une pièce).
+        static double EmbEff(Params p) => p.CoudeContreCoude && !p.ZUnePiece ? p.EmboitementZ : 0;
+        /// <summary>Position de la couture (angle depuis l'extrados du 1er coude) : 0 = extrados (coude
+        /// normal, 2 coudes) ; π/2 = sur le côté (S d'une pièce) -> couture alignée d'un bout à l'autre.</summary>
+        public static double SeamAng(Params p) => UnePiece(p) ? Math.PI / 2 : 0;
+
         /// <summary>Déport obtenu avec 2 coudes de rayon d'axe Rm, l'un contre l'autre :
-        /// 2·Rm·S1 (les 2 coudes) − emboîtement·sin(déviation) (le coude 2 recule le long du joint).</summary>
+        /// 2·Rm·S1 (les 2 coudes) − emboîtement·sin(déviation) (le coude 2 recule le long du joint).
+        /// S d'une pièce : même axe, sans emboîtement.</summary>
         public static double DeportZ(Params p, double Rm) =>
-            2 * Rm * AxeUnitaire(p).S1 - p.EmboitementZ * Math.Sin(DevRad(p));
+            2 * Rm * AxeUnitaire(p).S1 - EmbEff(p) * Math.Sin(DevRad(p));
 
         /// <summary>Rayon d'axe qui donne exactement le déport voulu (formule fermée : le déport est linéaire en Rm).</summary>
         public static double RmPourDeport(Params p)
         {
             double S1 = AxeUnitaire(p).S1;
-            return S1 < 1e-9 ? 0 : (p.Deport + p.EmboitementZ * Math.Sin(DevRad(p))) / (2 * S1);
+            return S1 < 1e-9 ? 0 : (p.Deport + EmbEff(p) * Math.Sin(DevRad(p))) / (2 * S1);
         }
 
         /// <summary>Déport mini en coude contre coude (gorge nulle au bout femelle).</summary>
@@ -255,7 +270,7 @@ namespace CoudeDev
         /// <summary>Hauteur du dévoiement = distance axiale entre le centre de l'entrée (femelle coude 1)
         /// et le centre de la sortie (mâle coude 2).</summary>
         public static double HauteurZ(Params p) =>
-            2 * SolveRm(p) * AxeUnitaire(p).C1 - p.EmboitementZ * Math.Cos(DevRad(p));
+            2 * SolveRm(p) * AxeUnitaire(p).C1 - EmbEff(p) * Math.Cos(DevRad(p));
 
         /// <summary>Longueur extrados du bras correspondant au rayon utilisé (calculée en mode Z).</summary>
         public static double BrasExtCalcule(Params p) => HeelFemelle(p, SolveRm(p));
@@ -275,9 +290,15 @@ namespace CoudeDev
             return Math.Max(0.5, (lo + hi) / 2);
         }
 
-        struct Spec { public double Rf, r, L; public bool SqT, SqB; public double Sf, Sm; public string Name; public int Qty; }
+        // PhT / PhB : phase de l'onglet haut / bas. 0 = talon (côté long) à θ = 0 (sens du 1er coude) ;
+        // π = talon à θ = π (2e coude d'un S d'une pièce, qui tourne dans l'autre sens).
+        // Ang : orientation de l'axe de la virole (angle cumulé dans le plan du coude).
+        struct Spec { public double Rf, r, L; public bool SqT, SqB; public double PhT, PhB, Ang; public bool Centre;
+                      public double Sf, Sm; public string Name; public int Qty; }
 
         // Décrit chaque virole : tube globalement conique (femelle -> mâle), mitres au joint.
+        // Coude normal / 2 coudes : N viroles. S d'une pièce : 2N−1 viroles, la virole centrale
+        // (= mâle du coude 1 + femelle du coude 2) fait 2·Lend = Lint, onglet haut phase 0, bas phase π.
         static List<Spec> Specs(Params p, out double Ltot, out double alpha, out double phi)
         {
             int N = Math.Max(2, p.NbSegments);
@@ -286,9 +307,11 @@ namespace CoudeDev
             double Rm = SolveRm(p);
             double Lend = Rm * Math.Tan(alpha);
             double Lint = 2 * Rm * Math.Tan(alpha);
+            bool s1 = UnePiece(p);
+            int M = s1 ? 2 * N - 1 : N;
 
-            var lens = new double[N];
-            for (int k = 0; k < N; k++) lens[k] = (k == 0 || k == N - 1) ? Lend : Lint;
+            var lens = new double[M];
+            for (int k = 0; k < M; k++) lens[k] = (k == 0 || k == M - 1) ? Lend : Lint;
             double total = 0; foreach (var l in lens) total += l;
             Ltot = total;
 
@@ -296,25 +319,46 @@ namespace CoudeDev
             double Rmal = RMal(p);
             double Rad(double s) => Rfem + (Rmal - Rfem) * (s / total);
 
-            var s = new double[N + 1];
-            for (int k = 0; k < N; k++) s[k + 1] = s[k] + lens[k];
+            var s = new double[M + 1];
+            for (int k = 0; k < M; k++) s[k + 1] = s[k] + lens[k];
 
             string fem = p.AlignFourreau
                 ? $"BOUT FEMELLE  Ø{p.Diametre:0} fourreau (Ø réel {2*Rfem:0.#})"
                 : $"BOUT FEMELLE  Ø{p.Diametre:0} exact";
             var specs = new List<Spec>();
-            for (int k = 0; k < N; k++)
+            for (int k = 0; k < M; k++)
             {
+                bool centre = s1 && k == N - 1;
                 string name = (k == 0) ? fem
-                            : (k == N - 1) ? $"BOUT MALE  -{p.Reduction:0}mm circ (Ø réel {2*Rmal:0.#})"
+                            : (k == M - 1) ? $"BOUT MALE  -{p.Reduction:0}mm circ (Ø réel {2*Rmal:0.#})"
+                            : centre ? "ELEMENT CENTRAL (onglets opposés)"
                             : "INTERMEDIAIRE";
                 specs.Add(new Spec {
                     Rf = Rad(s[k]), r = Rad(s[k + 1]), L = lens[k],
-                    SqT = (k == 0), SqB = (k == N - 1),
+                    SqT = (k == 0), SqB = (k == M - 1),
+                    // joint (k-1,k) au 2e coude si k ≥ N ; joint (k,k+1) au 2e coude si k ≥ N-1
+                    PhT = (s1 && k >= N) ? Math.PI : 0,
+                    PhB = (s1 && k >= N - 1) ? Math.PI : 0,
+                    // l'axe tourne de φ à chaque joint, puis revient dans le 2e coude du S
+                    Ang = (k <= N - 1 ? k : 2 * (N - 1) - k) * phi,
+                    Centre = centre,
                     Sf = s[k], Sm = s[k + 1], Name = name, Qty = 1
                 });
             }
             return specs;
+        }
+
+        // Point 3D local d'un bord de virole à l'angle GLOBAL thG (0 = extrados du 1er coude),
+        // avec la phase de l'onglet (talon à 0 ou à π).
+        static V3 Pt3(Spec sp, double alpha, double thG, bool top)
+        {
+            double a = top ? (sp.SqT ? 0 : alpha) : (sp.SqB ? 0 : alpha);
+            double c = Math.Cos(thG + (top ? sp.PhT : sp.PhB));
+            double m = (sp.Rf - sp.r) / sp.L, b = (sp.Rf + sp.r) / 2.0, sa = Math.Sin(a), ca = Math.Cos(a), z;
+            if (top) z = (ca * sp.L / 2 + sa * b * c) / (ca - sa * m * c);
+            else     z = (-ca * sp.L / 2 - sa * b * c) / (ca + sa * m * c);
+            double rho = m * z + b;
+            return new V3(rho * Math.Cos(thG), rho * Math.Sin(thG), z);
         }
 
         static V3 SolveZ(double Rf, double r, double L, double alpha, double theta, bool top)
@@ -327,14 +371,15 @@ namespace CoudeDev
             return new V3(rho * c, rho * Math.Sin(theta), z);
         }
 
-        static (V3[] F, V3[] M) Gore3D(Spec sp, double alpha, int ndiv)
+        // Bagues 3D d'une virole, θ local depuis la couture (index 0 = couture).
+        static (V3[] F, V3[] M) Gore3D(Spec sp, double alpha, int ndiv, double seam)
         {
             var F = new V3[ndiv + 1]; var M = new V3[ndiv + 1];
             for (int i = 0; i <= ndiv; i++)
             {
-                double th = 2 * Math.PI * i / ndiv;
-                F[i] = SolveZ(sp.Rf, sp.r, sp.L, sp.SqT ? 0 : alpha, th, true);
-                M[i] = SolveZ(sp.Rf, sp.r, sp.L, sp.SqB ? 0 : alpha, th, false);
+                double th = seam + 2 * Math.PI * i / ndiv;
+                F[i] = Pt3(sp, alpha, th, true);
+                M[i] = Pt3(sp, alpha, th, false);
             }
             return (F, M);
         }
@@ -346,24 +391,27 @@ namespace CoudeDev
         //  cône, à l'angle ψ = k·θ (k = sin du demi-angle au sommet).
         //  Écrit sous forme bien conditionnée (pas de soustraction de grands
         //  nombres quand le cône est presque un cylindre).
-        //  Repère : bord femelle à θ=0 à l'origine, θ croissant vers +X,
-        //  bord femelle en haut.
+        //  Repère : bord femelle à θ=0 (= la couture) à l'origine, θ croissant
+        //  vers +X, bord femelle en haut. θ est compté DEPUIS LA COUTURE :
+        //  l'onglet voit l'angle θ + couture + phase (talon à 0 ou à π).
         // ------------------------------------------------------------------
         sealed class Dev
         {
-            readonly double m, b, L, k, sq, Rf, r, aT, aB, z0, rho0;
-            public Dev(Spec sp, double alpha)
+            readonly double m, b, L, k, sq, Rf, r, aT, aB, phT, phB, z0, rho0;
+            public Dev(Spec sp, double alpha, double seam)
             {
                 Rf = sp.Rf; r = sp.r; L = sp.L;
                 m = (Rf - r) / L; b = (Rf + r) / 2.0;
                 sq = Math.Sqrt(1 + m * m); k = m / sq;
                 aT = sp.SqT ? 0 : alpha; aB = sp.SqB ? 0 : alpha;
+                phT = seam + sp.PhT; phB = seam + sp.PhB;
                 z0 = Z(0, true, out _); rho0 = m * z0 + b;
             }
             // Cote axiale du bord (plan droit ou d'onglet) et dérivée dz/dθ.
             double Z(double th, bool top, out double dz)
             {
-                double a = top ? aT : aB, sa = Math.Sin(a), ca = Math.Cos(a), c = Math.Cos(th), s = Math.Sin(th);
+                double a = top ? aT : aB, sa = Math.Sin(a), ca = Math.Cos(a), ph = top ? phT : phB,
+                       c = Math.Cos(th + ph), s = Math.Sin(th + ph);
                 if (top) { double den = ca - sa * m * c; dz = -s * sa * ca * Rf / (den * den); return (ca * L / 2 + sa * b * c) / den; }
                 else     { double den = ca + sa * m * c; dz =  s * sa * ca * r  / (den * den); return -(ca * L / 2 + sa * b * c) / den; }
             }
@@ -390,10 +438,11 @@ namespace CoudeDev
 
             var gores = new List<Gore>();
             int N = specs.Count, mid = 0;
+            double seam = SeamAng(p);
             for (int k = 0; k < N; k++)
             {
                 var sp = specs[k];
-                var dv = new Dev(sp, alpha);
+                var dv = new Dev(sp, alpha, seam);
 
                 // Redressement : corde du bord femelle horizontale (parallèle à l'écran).
                 V2 e = dv.Pt(TWO_PI, true);
@@ -408,7 +457,14 @@ namespace CoudeDev
                 string nm = sp.Name, tag;
                 if (k == 0) tag = "FEMELLE";
                 else if (k == N - 1) tag = "MALE";
+                else if (sp.Centre) tag = "CENTRE";
                 else { mid++; nm = $"INTERMEDIAIRE {mid}"; tag = $"INTER{mid}"; }
+
+                // Talon (extrados) / gorge (intrados) côté MÂLE (bord bas) : là où le bord bas est le plus long.
+                // Coude normal : talon = couture (θ 0). S d'une pièce : couture sur le côté -> talon à ±90°.
+                double thHeel = ((-(seam + sp.PhB)) % TWO_PI + TWO_PI) % TWO_PI;
+                int heelIdx = (int)Math.Round(thHeel / TWO_PI * nd) % nd;
+                int throatIdx = (heelIdx + nd / 2) % nd;
 
                 // Recouvrement dégradé : bout femelle 20→joint 25, bout mâle 25→35
                 double recF, recM;
@@ -442,14 +498,15 @@ namespace CoudeDev
                 // Trous repère : P(k+1) = k+1 trous, dans la patte côté mâle (bord bas)
                 var trous = new List<V2>(); string? trouMsg = null;
                 if (p.TrousRepere && p.TrouDiam > 0)
-                    trouMsg = PlaceTrous(fT, fB, tB, thM, recM, F2[nd], M2[nd], fT(thF), fB(thM), k + 1, p, trous);
+                    trouMsg = PlaceTrous(fT, fB, tB, thF, thM, recM, F2[nd], M2[nd], fT(thF), fB(thM), k + 1, p, trous);
                 // mêmes trous en coordonnées cône (θ de la génératrice, distance au bord bas) pour la vue 3D
                 var trousTS = new List<V2>();
                 foreach (var c in trous) trousTS.Add(ToCone(fT, fB, TWO_PI, Math.Max(thF, thM) + 0.05, c));
 
                 gores.Add(new Gore {
-                    Female = F2, Male = M2, Name = nm, Tag = tag, PartNo = k + 1, Qty = p.CoudeContreCoude ? 2 : 1,
-                    HeelIndex = 0, ThroatIndex = nd / 2,
+                    Female = F2, Male = M2, Name = nm, Tag = tag, PartNo = k + 1,
+                    Qty = p.CoudeContreCoude && !p.ZUnePiece ? 2 : 1,           // 2 coudes séparés : chaque pièce ×2
+                    HeelIndex = heelIdx, ThroatIndex = throatIdx,
                     Width = (F2[nd] - F2[0]).Norm(),
                     DevHaut = ArcLen(tT, 0, thF), DevBas = ArcLen(tB, 0, thM),
                     SeamRecF = recF, SeamRecM = recM,
@@ -489,7 +546,7 @@ namespace CoudeDev
         //  Renvoie null si OK, sinon un message (trou recentré / code incomplet).
         // ------------------------------------------------------------------
         static string? PlaceTrous(Func<double, V2> fT, Func<double, V2> fB, Func<double, V2> tB,
-                                  double thM, double rec, V2 seamF, V2 seamM, V2 flapF, V2 flapM,
+                                  double thF, double thM, double rec, V2 seamF, V2 seamM, V2 flapF, V2 flapM,
                                   int count, Params p, List<V2> outC)
         {
             double r = p.TrouDiam / 2, along = p.TrouBord;
@@ -520,19 +577,65 @@ namespace CoudeDev
             foot = foot + nIn * (along - Side(foot, flapM, flapF, seamMid));
             double H = (flapF - flapM).Norm();                         // hauteur dispo le long du bout de patte
 
-            int placed = 0;
-            for (int j = 0; j < count; j++)
+            // distance VRAIE (perpendiculaire) d'un point aux bords courbes, sur la zone de la patte
+            static double DSeg(V2 q, V2 a, V2 b)
             {
-                double h = p.TrouBord + j * p.TrouPas;
-                V2 c = foot + u * h;
-                bool ok = h + r <= H - 1
-                       && Side(c, seamM, seamF, flapMid) >= r + 1     // recouvert une fois roulé
-                       && Side(c, flapM, flapF, seamMid) >= r + 1;    // matière jusqu'au bout de patte
-                if (!ok) break;
-                outC.Add(c); placed++;
+                V2 ab = b - a; double l2 = V2.Dot(ab, ab);
+                double t = l2 < 1e-18 ? 0 : Math.Max(0, Math.Min(1, V2.Dot(q - a, ab) / l2));
+                return (q - (a + ab * t)).Norm();
             }
-            if (placed < count)
-                msg = $"{placed}/{count} trous seulement : CODE FAUX (+ de recouvrement ou - d'entraxe)";
+            static double DEdge(Func<double, V2> f, double t0, double t1, V2 q)
+            {
+                const int NS = 240; double best = double.PositiveInfinity; V2 prev = f(t0);
+                for (int i = 1; i <= NS; i++) { V2 cur = f(t0 + (t1 - t0) * i / NS); best = Math.Min(best, DSeg(q, prev, cur)); prev = cur; }
+                return best;
+            }
+            const double TP = 2 * Math.PI;
+            double DBas(V2 q) => DEdge(fB, TP - 0.8, thM, q);
+            double DHaut(V2 q) => DEdge(fT, TP - 0.8, thF, q);
+
+            // 1er trou à "bord" mm PERPENDICULAIREMENT au bord bas (compte si le bord est incliné,
+            // ex. S d'une pièce dont la couture est sur le côté) : bissection sur la hauteur dans la colonne
+            double h0 = p.TrouBord;
+            if (DBas(foot + u * (3 * p.TrouBord)) > p.TrouBord)
+            {
+                double lo = 0, hi = 3 * p.TrouBord;
+                for (int it = 0; it < 40; it++) { double mid = 0.5 * (lo + hi); if (DBas(foot + u * mid) < p.TrouBord) lo = mid; else hi = mid; }
+                h0 = 0.5 * (lo + hi);
+            }
+
+            // pose la colonne avec un entraxe donné ; renvoie le nombre de trous qui tiennent
+            List<V2> Pose(double pas)
+            {
+                var l = new List<V2>();
+                for (int j = 0; j < count; j++)
+                {
+                    double h = h0 + j * pas;
+                    V2 c = foot + u * h;
+                    bool ok = h + r <= H - 1
+                           && Side(c, seamM, seamF, flapMid) >= r + 1     // recouvert une fois roulé
+                           && Side(c, flapM, flapF, seamMid) >= r + 1     // matière jusqu'au bout de patte
+                           && DBas(c) >= r + 1 && DHaut(c) >= r + 1;      // matière jusqu'aux bords haut / bas
+                    if (!ok) break;
+                    l.Add(c);
+                }
+                return l;
+            }
+
+            // Le NOMBRE de trous est le code : si la pièce est trop basse pour l'entraxe saisi,
+            // on resserre (pas de 1 mm) jusqu'à Ø + 3 mm de matière avant de déclarer le code faux.
+            var best = Pose(p.TrouPas);
+            double pasU = p.TrouPas;
+            for (double pas = p.TrouPas - 1; best.Count < count && pas >= p.TrouDiam + 3 - 1e-9; pas -= 1)
+            {
+                var t = Pose(pas);
+                if (t.Count > best.Count) { best = t; pasU = pas; }
+            }
+            outC.AddRange(best);
+            if (best.Count < count)
+                msg = $"{best.Count}/{count} trous seulement : CODE FAUX (+ de recouvrement ou - d'entraxe)";
+            else if (pasU < p.TrouPas - 1e-9)
+                msg = (msg != null ? msg + " ; " : "") + $"entraxe resserré à {pasU:0} mm pour loger les {count} trous";
             return msg;
         }
 
@@ -622,13 +725,16 @@ namespace CoudeDev
         {
             var specs = Specs(p, out _, out double alpha, out double phi);
             int N = specs.Count;
+            double seam = SeamAng(p);
             var bands = new List<Band3D>();
 
+            // axe : orientation de chaque virole (le S revient dans l'autre sens après l'élément central)
             var u = new V3[N]; var h = new V3[N]; var P = new V3[N + 1];
             for (int k = 0; k < N; k++)
             {
-                u[k] = new V3(Math.Cos(k * phi), 0, -Math.Sin(k * phi));
-                h[k] = new V3(Math.Sin(k * phi), 0,  Math.Cos(k * phi));
+                double an = specs[k].Ang;
+                u[k] = new V3(Math.Cos(an), 0, -Math.Sin(an));
+                h[k] = new V3(Math.Sin(an), 0,  Math.Cos(an));
             }
             P[0] = new V3(0, 0, 0);
             for (int k = 0; k < N; k++) P[k + 1] = P[k] + u[k] * specs[k].L;
@@ -636,7 +742,7 @@ namespace CoudeDev
             for (int k = 0; k < N; k++)
             {
                 var sp = specs[k];
-                var (F, M) = Gore3D(sp, alpha, p.NdivDev);
+                var (F, M) = Gore3D(sp, alpha, p.NdivDev, seam);
                 V3 C = (P[k] + P[k + 1]) * 0.5;
                 V3 Rot(V3 v) => h[k] * v.X + new V3(0, v.Y, 0) + (u[k] * (-v.Z));    // x->h, y->y, z->-u
                 V3 Apply(V3 v) => Rot(v) + C;
@@ -646,17 +752,18 @@ namespace CoudeDev
                 // normale extérieure du cône ρ = m·z + b : (cos θ, sin θ, −m)
                 double m = (sp.Rf - sp.r) / sp.L;
                 V3 Nrm(double th) { var n = new V3(Math.Cos(th), Math.Sin(th), -m); return n * (1 / n.Norm()); }
-                var band = new Band3D { Fem = Fg, Mal = Mg, SeamN = Rot(Nrm(0)) };
+                var band = new Band3D { Fem = Fg, Mal = Mg, SeamN = Rot(Nrm(seam)) };
 
-                // trous repère : (θ, distance au bord bas) -> point de la génératrice, 1 mm au-dessus (patte)
+                // trous repère : (θ depuis la couture, distance au bord bas) -> point de la génératrice,
+                // 1 mm au-dessus (la patte est par-dessus)
                 if (gores != null && k < gores.Count && gores[k].TrousTS.Count > 0)
                 {
-                    double aT = sp.SqT ? 0 : alpha, aB = sp.SqB ? 0 : alpha;
                     var tl = new List<V3>(); var tn = new List<V3>();
                     foreach (var ts in gores[k].TrousTS)
                     {
-                        V3 B = SolveZ(sp.Rf, sp.r, sp.L, aB, ts.X, false), T = SolveZ(sp.Rf, sp.r, sp.L, aT, ts.X, true);
-                        V3 d = T - B, n = Nrm(ts.X);
+                        double thG = ts.X + seam;
+                        V3 B = Pt3(sp, alpha, thG, false), T = Pt3(sp, alpha, thG, true);
+                        V3 d = T - B, n = Nrm(thG);
                         tl.Add(Apply(B + d * (ts.Y / d.Norm()) + n * 1.0));
                         tn.Add(Rot(n));
                     }
@@ -665,7 +772,7 @@ namespace CoudeDev
                 bands.Add(band);
             }
 
-            if (p.CoudeContreCoude)
+            if (p.CoudeContreCoude && !p.ZUnePiece)
             {
                 // Coude 2 = coude 1 tourné de 180° autour de son axe d'entrée (X), puis orienté
                 // sur la sortie du coude 1 (rotation de la déviation dans le plan XZ) et

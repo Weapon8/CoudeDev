@@ -29,7 +29,7 @@ namespace CoudeDev
         TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecJ, tRecM, tTol, tTolMax, tArcMini;
         TextBox tTrouD, tTrouB, tTrouP, tDeport, tEmbZ;
         CheckBox chkAnnot, chkFourreau, chkTrous;
-        RadioButton rbNormal, rbZ;
+        RadioButton rbNormal, rbZ, rbS;
         Button btn2D, btn3D;
         Label lblInfo;
         List<Gore> _gores = new();
@@ -148,22 +148,24 @@ namespace CoudeDev
 
             // --- Cadre COUDE CONTRE COUDE (dévoiement en Z) ---
             y+=8;
-            var grpZ = new GroupBox{ Text="COUDE CONTRE COUDE (Z / dévoiement)", Left=8, Top=y, Width=282, Height=176,
+            var grpZ = new GroupBox{ Text="COUDE CONTRE COUDE (Z / dévoiement)", Left=8, Top=y, Width=282, Height=200,
                 ForeColor=ACCENT, Font=new Font("Segoe UI",9,FontStyle.Bold) };
             var fReg = new Font("Segoe UI",9);
-            rbNormal = new RadioButton{ Text="Coude normal", Left=10, Top=22, Width=260, Height=22, ForeColor=FG, Font=fReg, Checked=true };
-            rbZ      = new RadioButton{ Text="Coude contre coude (2 coudes en Z)", Left=10, Top=44, Width=262, Height=22, ForeColor=FG, Font=fReg };
-            grpZ.Controls.Add(rbNormal); grpZ.Controls.Add(rbZ);
+            rbNormal = new RadioButton{ Text="Coude normal", Left=10, Top=22, Width=262, Height=22, ForeColor=FG, Font=fReg, Checked=true };
+            rbZ      = new RadioButton{ Text="En 2 parties : 2 coudes emboîtés", Left=10, Top=44, Width=262, Height=22, ForeColor=FG, Font=fReg };
+            rbS      = new RadioButton{ Text="En 3 parties : S, élément central", Left=10, Top=66, Width=262, Height=22, ForeColor=FG, Font=fReg };
+            grpZ.Controls.Add(rbNormal); grpZ.Controls.Add(rbZ); grpZ.Controls.Add(rbS);
             TextBox FieldZ(string lbl,string val,int top){
                 var l=new Label{Text=lbl,Left=10,Top=top+3,Width=150,ForeColor=FG,Font=fReg}; grpZ.Controls.Add(l);
                 var t=new TextBox{Left=162,Top=top,Width=110,Text=val,BackColor=INPUT,ForeColor=Color.White,BorderStyle=BorderStyle.FixedSingle,Font=fReg};
                 t.TextChanged+=(s,e)=>{ _recalcTimer.Stop(); _recalcTimer.Start(); }; grpZ.Controls.Add(t); return t;
             }
-            tDeport = FieldZ("Déport entre axes (mm)", "300", 74);
-            tEmbZ   = FieldZ("Emboîtement coudes (mm)", "30", 104);
-            grpZ.Controls.Add(new Label{ Text="2 coudes identiques, le 2e tourné de 180°.\nBras ext. calculé pour tenir le déport.",
-                Left=10, Top=134, Width=266, Height=34, ForeColor=Color.FromArgb(140,148,160), Font=new Font("Segoe UI",8f,FontStyle.Italic) });
+            tDeport = FieldZ("Déport entre axes (mm)", "300", 96);
+            tEmbZ   = FieldZ("Emboîtement coudes (mm)", "30", 126);
+            grpZ.Controls.Add(new Label{ Text="2 parties : 2 coudes identiques, le 2e à 180°.\n3 parties : 1 pièce, couture sur le côté.\nBras ext. calculé pour tenir le déport.",
+                Left=10, Top=152, Width=266, Height=44, ForeColor=Color.FromArgb(140,148,160), Font=new Font("Segoe UI",8f,FontStyle.Italic) });
             rbZ.CheckedChanged+=(s,e)=>{ ApplyMode(); _recalcTimer.Stop(); Recalc(); };
+            rbS.CheckedChanged+=(s,e)=>{ ApplyMode(); _recalcTimer.Stop(); Recalc(); };
             inputs.Controls.Add(grpZ);
             y+=grpZ.Height+4;
 
@@ -192,11 +194,12 @@ namespace CoudeDev
         }
 
         // Coude normal : bras ext. saisi. Coude contre coude : bras ext. calculé depuis le déport.
+        // L'emboîtement ne sert qu'entre 2 coudes séparés (pas dans le S d'une pièce).
         void ApplyMode()
         {
-            bool z = rbZ.Checked;
+            bool z = rbZ.Checked || rbS.Checked;
             tRatio.Enabled = !z;
-            tDeport.Enabled = z; tEmbZ.Enabled = z;
+            tDeport.Enabled = z; tEmbZ.Enabled = rbZ.Checked;
         }
 
         // Bouton de la barre segmentée (style pilule plate)
@@ -245,7 +248,8 @@ namespace CoudeDev
                     TolArc=tol, TolArcMax=tolMax, ArcMini=amini,
                     AlignFourreau=chkFourreau.Checked,
                     TrousRepere=chkTrous.Checked, TrouDiam=trD, TrouBord=trB, TrouPas=trP,
-                    CoudeContreCoude=rbZ.Checked, Deport=dep, EmboitementZ=embZ };
+                    CoudeContreCoude=rbZ.Checked||rbS.Checked, ZUnePiece=rbS.Checked, Deport=dep, EmboitementZ=embZ };
+                rbS.Text=$"En {2*nb-1} parties : S, élément central";
 
                 _err = ElbowGeometry.Validate(_p);
                 if (_err != null)
@@ -285,7 +289,13 @@ namespace CoudeDev
                         }
                 }
                 else trous = "\nRepère : trous désactivés";
-                string zz = _p.CoudeContreCoude
+                string zz = _p.CoudeContreCoude && _p.ZUnePiece
+                    ? $"\nS D'UNE PIÈCE : {_gores.Count} viroles\n"+
+                      $"  déport {dep:0} · hauteur {ElbowGeometry.HauteurZ(_p):0} mm\n"+
+                      $"  bras ext calculé {ElbowGeometry.BrasExtCalcule(_p):0} mm\n"+
+                      $"  élément central à onglets opposés\n"+
+                      $"  couture sur le côté (alignée)"
+                    : _p.CoudeContreCoude
                     ? $"\nCOUDE CONTRE COUDE (2 coudes)\n"+
                       $"  déport {dep:0} · hauteur {ElbowGeometry.HauteurZ(_p):0} mm\n"+
                       $"  bras ext calculé {ElbowGeometry.BrasExtCalcule(_p):0} mm\n"+
@@ -529,8 +539,10 @@ namespace CoudeDev
             g.DrawString("● P"+_gores.Count+" MÂLE (−"+_p.Reduction.ToString("0")+"mm circ)",f,bMal,190,28);
             g.DrawString($"Angle réel {_p.AngleReel:0.##}°  (déviation {_p.Deviation:0.##}°)",f,bAcc,20,48);
             if(_p.CoudeContreCoude)
-                g.DrawString($"COUDE CONTRE COUDE : déport {_p.Deport:0} mm · hauteur {ElbowGeometry.HauteurZ(_p):0} mm · 2e coude tourné de 180°",f,bAcc,20,68);
-            g.DrawString("glisser pour tourner     ─ vert = couture (extrados)     ○ orange = trous repère",f,bGray,20,preview.Height-22);
+                g.DrawString(_p.ZUnePiece
+                    ? $"S D'UNE PIÈCE ({_gores.Count} viroles) : déport {_p.Deport:0} mm · hauteur {ElbowGeometry.HauteurZ(_p):0} mm · couture sur le côté"
+                    : $"COUDE CONTRE COUDE : déport {_p.Deport:0} mm · hauteur {ElbowGeometry.HauteurZ(_p):0} mm · 2e coude tourné de 180°",f,bAcc,20,68);
+            g.DrawString($"glisser pour tourner     ─ vert = couture ({(ElbowGeometry.UnePiece(_p)?"côté":"extrados")})     ○ orange = trous repère",f,bGray,20,preview.Height-22);
         }
 
         void Generate(object? sender, EventArgs e)
@@ -543,7 +555,7 @@ namespace CoudeDev
             }
             using var sfd=new SaveFileDialog{Filter="DXF (*.dxf)|*.dxf", OverwritePrompt=false,
                 Title="Nom de base — 1 DXF par pièce (_P1_FEMELLE, _P2_MALE…)",
-                FileName=(_p.CoudeContreCoude?$"CoudeZ_dep{_p.Deport:0}_":"Coude_")+
+                FileName=(_p.CoudeContreCoude?(_p.ZUnePiece?$"CoudeS_dep{_p.Deport:0}_":$"CoudeZ_dep{_p.Deport:0}_"):"Coude_")+
                          $"{_p.AngleReel.ToString("0.#",CultureInfo.InvariantCulture)}deg_D{_p.Diametre:0}_{_p.NbSegments}el.dxf"};
             if(sfd.ShowDialog()!=DialogResult.OK)return;
             try{
@@ -558,7 +570,8 @@ namespace CoudeDev
                 var lst=new List<string>(); foreach(var x in files) lst.Add("  "+Path.GetFileName(x));
                 MessageBox.Show($"{files.Count} DXF générés dans :\n{Path.GetDirectoryName(files[0])}\n\n"+string.Join("\n",lst)+
                     (chkAnnot.Checked?"\n\n(avec traçage / repères / textes)":"\n\n(contour DECOUPE seul)")+
-                    (_p.CoudeContreCoude?$"\n\nCOUDE CONTRE COUDE : chaque pièce ×2 (2 coudes identiques),\nle 2e coude tourné de 180° → coutures à l'opposé. Déport {_p.Deport:0} mm.":"")+
+                    (_p.CoudeContreCoude && _p.ZUnePiece?$"\n\nS D'UNE PIÈCE : {_gores.Count} viroles ×1, élément central à onglets opposés,\ncouture sur le côté alignée d'un bout à l'autre. Déport {_p.Deport:0} mm.":
+                     _p.CoudeContreCoude?$"\n\nCOUDE CONTRE COUDE : chaque pièce ×2 (2 coudes identiques),\nle 2e coude tourné de 180° → coutures à l'opposé. Déport {_p.Deport:0} mm.":"")+
                     (_p.TrousRepere?$"\n\nTrous repère Ø{_p.TrouDiam:0.#} : nb trous = n° de pièce (1 = femelle, {_gores.Count} = mâle),\ndans la patte côté mâle. Il faut le rond de {_p.TrouDiam:0.#} dans la tourelle.":""),
                     "OK",MessageBoxButtons.OK,MessageBoxIcon.Information);
             }catch(Exception ex){MessageBox.Show("Erreur : "+ex.Message);}
