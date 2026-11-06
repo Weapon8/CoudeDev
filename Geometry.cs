@@ -104,6 +104,12 @@ namespace CoudeDev
             /// (Ø200 -> 655 recouvrement compris). false : circonférence femelle = π·Ø exact.</summary>
             public bool AlignFourreau = true;
             public double Reduction = 25;     // mâle = circonférence - X mm (sur tout le coude)
+            /// <summary>true (défaut) : le mâle suit la femelle (corps femelle − Reduction).
+            /// false : développé final du mâle SAISI (recouvrement mâle compris), ex. reprise d'une
+            /// ancienne descente Ø140 -> Ø120 ; la réduction devient corps femelle − corps mâle.</summary>
+            public bool MaleSuitFemelle = true;
+            /// <summary>Développé final côté mâle, recouvrement compris (mm), utilisé si MaleSuitFemelle = false.</summary>
+            public double DevMaleFinal = 645;
             /// <summary>Angle RÉEL entre les deux bras, comme on le relève à la fausse équerre :
             /// 180 = tube droit, 135 = coude "à 45°", 90 = équerre.</summary>
             public double AngleReel = 90;
@@ -164,7 +170,10 @@ namespace CoudeDev
         /// <summary>Circonférence du corps côté femelle = développé femelle - recouvrement femelle.</summary>
         public static double CircFemelle(Params p) => DevFemelle(p) - p.RecBoutFemelle;
         /// <summary>Circonférence côté mâle = circonférence femelle - réduction X.</summary>
-        public static double CircMale(Params p) => CircFemelle(p) - p.Reduction;
+        public static double CircMale(Params p) =>
+            p.MaleSuitFemelle ? CircFemelle(p) - p.Reduction : p.DevMaleFinal - p.RecBoutMale;
+        /// <summary>Réduction réellement appliquée (mm de circonférence) : saisie, ou déduite du dév. mâle saisi.</summary>
+        public static double ReductionEff(Params p) => CircFemelle(p) - CircMale(p);
         public static double DevMale(Params p) => CircMale(p) + p.RecBoutMale;
         static double RFem(Params p) => CircFemelle(p) / (2 * Math.PI);
         static double RMal(Params p) => CircMale(p) / (2 * Math.PI);
@@ -180,7 +189,18 @@ namespace CoudeDev
                 return $"Onglet de {alDeg:0.#}° par joint : trop fort.\nAugmente l'angle réel ou le nombre d'éléments.";
             if (p.RecBoutFemelle < 0 || p.RecJoint < 0 || p.RecBoutMale < 0) return "Recouvrements >= 0.";
             if (!(CircFemelle(p) > 0.5 * Math.PI * p.Diametre)) return "Recouvrement femelle trop grand pour ce développé.";
-            if (p.Reduction < 0 || p.Reduction >= CircFemelle(p) * 0.5) return "Réduction mâle hors limites.";
+            if (p.MaleSuitFemelle)
+            {
+                if (p.Reduction < 0 || p.Reduction >= CircFemelle(p) * 0.5) return "Réduction mâle hors limites.";
+            }
+            else
+            {
+                if (!(p.DevMaleFinal > p.RecBoutMale)) return "Dév. final mâle trop petit (≤ recouvrement mâle).";
+                double redE = ReductionEff(p);
+                if (redE < 0)
+                    return $"Dév. final mâle trop grand : le mâle doit rentrer dans la femelle.\nMaxi {CircFemelle(p) + p.RecBoutMale:0.#} mm (corps femelle + recouv. mâle).";
+                if (redE >= CircFemelle(p) * 0.5) return "Dév. final mâle trop petit (réduction > 50 % de la circonférence).";
+            }
             if (p.CoudeContreCoude)
             {
                 if (!(p.Deport > 0)) return "Coude contre coude : déport > 0.";
@@ -330,7 +350,7 @@ namespace CoudeDev
             {
                 bool centre = s1 && k == N - 1;
                 string name = (k == 0) ? fem
-                            : (k == M - 1) ? $"BOUT MALE  -{p.Reduction:0}mm circ (Ø réel {2*Rmal:0.#})"
+                            : (k == M - 1) ? $"BOUT MALE  -{ReductionEff(p):0}mm circ (Ø réel {2*Rmal:0.#})"
                             : centre ? "ELEMENT CENTRAL (onglets opposés)"
                             : "INTERMEDIAIRE";
                 specs.Add(new Spec {
@@ -791,6 +811,34 @@ namespace CoudeDev
                 }
             }
             return bands;
+        }
+
+        /// <summary>Plus grand écart 3D entre les 2 bords qui se rejoignent à un onglet (mm).
+        /// Nul pour un cylindre ; sur un tube conique, mitrer laisse un léger décalage qui grandit
+        /// avec la réduction (rattrapé au pointage). Pas compté à l'emboîtement entre 2 coudes.</summary>
+        public static double EcartJoints(Params p, List<Band3D> bands)
+        {
+            int per = p.CoudeContreCoude && !p.ZUnePiece ? bands.Count / 2 : bands.Count;
+            double mx = 0;
+            for (int k = 0; k + 1 < bands.Count; k++)
+            {
+                if (per > 0 && (k + 1) % per == 0) continue;           // joint entre les 2 coudes = emboîtement
+                var A = bands[k].Mal; var B = bands[k + 1].Fem;
+                foreach (var q in A)
+                {
+                    double best = double.PositiveInfinity;
+                    for (int i = 0; i + 1 < B.Length; i++)
+                    {
+                        V3 a = B[i], ab = B[i + 1] - a;
+                        double l2 = ab.X * ab.X + ab.Y * ab.Y + ab.Z * ab.Z;
+                        V3 aq = q - a;
+                        double t = l2 < 1e-18 ? 0 : Math.Max(0, Math.Min(1, (aq.X * ab.X + aq.Y * ab.Y + aq.Z * ab.Z) / l2));
+                        best = Math.Min(best, (q - (a + ab * t)).Norm());
+                    }
+                    mx = Math.Max(mx, best);
+                }
+            }
+            return mx;
         }
     }
 
