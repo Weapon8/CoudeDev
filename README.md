@@ -67,6 +67,28 @@ courbe** du bord (une fois roulée, elle tombe pile sur le début de la virole, 
 dépasser de l'onglet). La couture d'origine (bord recouvert) n'est qu'une ligne de
 pose sur le calque RECOUVREMENT (option).
 
+## Coude réducteur : Ø mâle (v1.4)
+Section EMBOÎTEMENT, case **« Mâle = même Ø que la femelle »** :
+- **cochée (défaut)** : comme avant, mâle = corps femelle − réduction ; le champ « Ø voulu mâle »
+  recopie (grisé) le Ø femelle ;
+- **décochée** : on saisit le **Ø mâle** — ex. **femelle 200 / mâle 160**, ou reprise d'une ancienne
+  descente **140 → 120**. Le bout mâle est **celui d'un coude de ce Ø avec les mêmes réglages** :
+  barème (ou π·Ø) − recouv. femelle − réduction. Ex. Ø160 : 529 − 20 − 25 = 484 → **Ø réel 154,1**
+  (rentre dans un Ø160 comme d'habitude), dév. mâle 484 + 35 = 519.
+- La **réduction X reste saisie** dans les 2 cas (jeu d'emboîtement, 25 par défaut) ; elle n'est
+  jamais réécrite par le programme. « Réduction totale » = corps femelle − corps mâle (Ø200 → 160 : 151).
+- Contrôles : Ø mâle ≤ Ø femelle (la femelle est le grand côté), réduction totale < 50 %.
+- **Écart aux onglets** affiché : mitrer un tube conique laisse un décalage entre les 2 bords d'un
+  joint, qui grandit avec la réduction et diminue vite avec le nombre d'éléments :
+
+  | Cas (90°)              | 2 él.   | 3 él.  | 4 él.  |
+  |------------------------|---------|--------|--------|
+  | Ø200, réduction 25     | 3,7 mm  |        |        |
+  | Ø140 → 120             | 9,2 mm  | 1,2 mm |        |
+  | Ø200 → 160             | 18,3 mm | 2,4 mm | 1,0 mm |
+
+  Au-delà de 5 mm : alerte orange qui donne **le nombre d'éléments à prendre** (et l'écart obtenu).
+
 ## Trous repère mâle / femelle (v1.4)
 Une fois poinçonnée, la pièce perd tous ses traçages : les apprentis / intérims ne savent plus
 quelle virole est la femelle, laquelle est le mâle, ni où est la patte. Pas de poinçon de

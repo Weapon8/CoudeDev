@@ -192,7 +192,9 @@ namespace CoudeDev
                                : g.Tag == "MALE"    ? $"   (dev bord male {g.DevBas:0.#} mm recouv. compris)" : "";
                     Text(L_INFOS, 0, -12, $"P{g.PartNo}/{nParts}  {g.Name}   x{g.Qty}{dev}", 7);
                     Text(L_INFOS, 0, -24,
-                        $"COUDE {p.AngleReel:0.#} deg reel (deviation {p.Deviation:0.#} deg) - {p.NbSegments} viroles - Ø{p.Diametre:0} - bras ext {ElbowGeometry.BrasExtCalcule(p):0}mm - male -{ElbowGeometry.ReductionEff(p):0}mm circ", 5);
+                        $"COUDE {p.AngleReel:0.#} deg reel (deviation {p.Deviation:0.#} deg) - {p.NbSegments} viroles - Ø{p.Diametre:0} - bras ext {ElbowGeometry.BrasExtCalcule(p):0}mm - " +
+                        (p.MaleSuitFemelle ? $"male -{p.Reduction:0}mm circ"
+                                           : $"male Ø{p.DiamMale:0} (Ø reel {ElbowGeometry.CircMale(p) / Math.PI:0.#}, -{p.Reduction:0}mm circ)"), 5);
                     Text(L_INFOS, 0, -32,
                         $"dev femelle {ElbowGeometry.DevFemelle(p):0.#} mm" + (p.AlignFourreau ? " (bareme fourreaux)" : " (pi x D + recouv.)") +
                         $" - dev male {ElbowGeometry.DevMale(p):0.#} mm", 5);

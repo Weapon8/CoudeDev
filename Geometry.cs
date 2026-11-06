@@ -104,12 +104,13 @@ namespace CoudeDev
             /// (Ø200 -> 655 recouvrement compris). false : circonférence femelle = π·Ø exact.</summary>
             public bool AlignFourreau = true;
             public double Reduction = 25;     // mâle = circonférence - X mm (sur tout le coude)
-            /// <summary>true (défaut) : le mâle suit la femelle (corps femelle − Reduction).
-            /// false : développé final du mâle SAISI (recouvrement mâle compris), ex. reprise d'une
-            /// ancienne descente Ø140 -> Ø120 ; la réduction devient corps femelle − corps mâle.</summary>
+            /// <summary>true (défaut) : le mâle suit la femelle (même Ø, corps femelle − Reduction).
+            /// false : Ø mâle SAISI (coude réducteur, ex. femelle Ø200 / mâle Ø160, reprise d'une ancienne
+            /// descente Ø140 -> Ø120) : le bout mâle est celui d'un coude de ce Ø avec les mêmes réglages
+            /// (barème ou π·Ø, − recouv. femelle, − Reduction).</summary>
             public bool MaleSuitFemelle = true;
-            /// <summary>Développé final côté mâle, recouvrement compris (mm), utilisé si MaleSuitFemelle = false.</summary>
-            public double DevMaleFinal = 645;
+            /// <summary>Ø nominal côté mâle (mm), utilisé si MaleSuitFemelle = false.</summary>
+            public double DiamMale = 160;
             /// <summary>Angle RÉEL entre les deux bras, comme on le relève à la fausse équerre :
             /// 180 = tube droit, 135 = coude "à 45°", 90 = équerre.</summary>
             public double AngleReel = 90;
@@ -158,6 +159,9 @@ namespace CoudeDev
 
             /// <summary>Déviation de l'axe = angle dont tourne le tube = 180 - angle réel.</summary>
             public double Deviation => 180.0 - AngleReel;
+
+            /// <summary>Copie (pour tester une variante, ex. un élément de plus).</summary>
+            public Params Clone() => (Params)MemberwiseClone();
         }
 
         static double AlphaRad(Params p) =>
@@ -170,8 +174,13 @@ namespace CoudeDev
         /// <summary>Circonférence du corps côté femelle = développé femelle - recouvrement femelle.</summary>
         public static double CircFemelle(Params p) => DevFemelle(p) - p.RecBoutFemelle;
         /// <summary>Circonférence côté mâle = circonférence femelle - réduction X.</summary>
+        /// <summary>Corps (circonférence roulée) côté femelle d'un coude de Ø d avec ces réglages :
+        /// barème fourreaux − recouv. femelle, ou π·d. CorpsPourDiam(p, Diametre) = CircFemelle(p).</summary>
+        public static double CorpsPourDiam(Params p, double d) =>
+            p.AlignFourreau ? BaremeFourreaux.Dev(d) - p.RecBoutFemelle : Math.PI * d;
+        /// <summary>Circonférence côté mâle = corps (Ø femelle, ou Ø mâle saisi) − réduction X.</summary>
         public static double CircMale(Params p) =>
-            p.MaleSuitFemelle ? CircFemelle(p) - p.Reduction : p.DevMaleFinal - p.RecBoutMale;
+            (p.MaleSuitFemelle ? CircFemelle(p) : CorpsPourDiam(p, p.DiamMale)) - p.Reduction;
         /// <summary>Réduction réellement appliquée (mm de circonférence) : saisie, ou déduite du dév. mâle saisi.</summary>
         public static double ReductionEff(Params p) => CircFemelle(p) - CircMale(p);
         public static double DevMale(Params p) => CircMale(p) + p.RecBoutMale;
@@ -189,18 +198,14 @@ namespace CoudeDev
                 return $"Onglet de {alDeg:0.#}° par joint : trop fort.\nAugmente l'angle réel ou le nombre d'éléments.";
             if (p.RecBoutFemelle < 0 || p.RecJoint < 0 || p.RecBoutMale < 0) return "Recouvrements >= 0.";
             if (!(CircFemelle(p) > 0.5 * Math.PI * p.Diametre)) return "Recouvrement femelle trop grand pour ce développé.";
-            if (p.MaleSuitFemelle)
+            if (!p.MaleSuitFemelle)
             {
-                if (p.Reduction < 0 || p.Reduction >= CircFemelle(p) * 0.5) return "Réduction mâle hors limites.";
+                if (!(p.DiamMale > 0)) return "Ø mâle > 0.";
+                if (p.DiamMale > p.Diametre + 1e-9) return "Ø mâle plus grand que le Ø femelle :\nle mâle est le petit côté (femelle = grand côté).";
             }
-            else
-            {
-                if (!(p.DevMaleFinal > p.RecBoutMale)) return "Dév. final mâle trop petit (≤ recouvrement mâle).";
-                double redE = ReductionEff(p);
-                if (redE < 0)
-                    return $"Dév. final mâle trop grand : le mâle doit rentrer dans la femelle.\nMaxi {CircFemelle(p) + p.RecBoutMale:0.#} mm (corps femelle + recouv. mâle).";
-                if (redE >= CircFemelle(p) * 0.5) return "Dév. final mâle trop petit (réduction > 50 % de la circonférence).";
-            }
+            if (p.Reduction < 0) return "Réduction mâle ≥ 0.";
+            if (ReductionEff(p) >= CircFemelle(p) * 0.5)
+                return $"Réduction mâle hors limites : {ReductionEff(p):0} mm circ au total\n(maxi {CircFemelle(p) * 0.5:0} mm = 50 % de la circonférence).\nRéduction habituelle : 25 mm.";
             if (p.CoudeContreCoude)
             {
                 if (!(p.Deport > 0)) return "Coude contre coude : déport > 0.";
@@ -350,7 +355,9 @@ namespace CoudeDev
             {
                 bool centre = s1 && k == N - 1;
                 string name = (k == 0) ? fem
-                            : (k == M - 1) ? $"BOUT MALE  -{ReductionEff(p):0}mm circ (Ø réel {2*Rmal:0.#})"
+                            : (k == M - 1) ? (p.MaleSuitFemelle
+                                ? $"BOUT MALE  -{p.Reduction:0}mm circ (Ø réel {2*Rmal:0.#})"
+                                : $"BOUT MALE  Ø{p.DiamMale:0} -{p.Reduction:0}mm circ (Ø réel {2*Rmal:0.#})")
                             : centre ? "ELEMENT CENTRAL (onglets opposés)"
                             : "INTERMEDIAIRE";
                 specs.Add(new Spec {
@@ -811,6 +818,20 @@ namespace CoudeDev
                 }
             }
             return bands;
+        }
+
+        /// <summary>Plus petit nombre d'éléments (jusqu'à 8) qui ramène l'écart aux onglets sous seuil.
+        /// Renvoie (n, écart) ou (0, 0) si aucun ne convient.</summary>
+        public static (int n, double ecart) ElementsPourEcart(Params p, double seuil)
+        {
+            for (int n = Math.Max(2, p.NbSegments) + 1; n <= 8; n++)
+            {
+                var q = p.Clone(); q.NbSegments = n;
+                if (Validate(q) != null) continue;
+                double e = EcartJoints(q, BuildElbow3D(q));
+                if (e <= seuil) return (n, e);
+            }
+            return (0, 0);
         }
 
         /// <summary>Plus grand écart 3D entre les 2 bords qui se rejoignent à un onglet (mm).

@@ -27,7 +27,7 @@ namespace CoudeDev
         static readonly Color WARN   = Color.FromArgb(255,110,90);   // message d'erreur
 
         TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecJ, tRecM, tTol, tTolMax, tArcMini;
-        TextBox tTrouD, tTrouB, tTrouP, tDeport, tEmbZ, tDevM;
+        TextBox tTrouD, tTrouB, tTrouP, tDeport, tEmbZ, tDiamM;
         CheckBox chkAnnot, chkFourreau, chkTrous, chkMaleSuit;
         bool _majTexte;   // true pendant qu'on réécrit un champ par programme (pas de recalcul en boucle)
         RadioButton rbNormal, rbZ, rbS;
@@ -119,13 +119,13 @@ namespace CoudeDev
             inputs.Controls.Add(chkFourreau); y+=28;
             Hint("Ø200 → 655 recouv. compris (comme ep-fourreaux)");
             tRed   = Field("Réduction mâle (mm circ)", "25");
-            chkMaleSuit = new CheckBox{ Text="Mâle = femelle − réduction", Left=12, Top=y, Width=276, Height=22,
+            chkMaleSuit = new CheckBox{ Text="Mâle = même Ø que la femelle", Left=12, Top=y, Width=276, Height=22,
                 ForeColor=FG, Checked=true };
             chkMaleSuit.CheckedChanged+=(s,e)=>{ ApplyMale(); _recalcTimer.Stop(); Recalc(); };
             inputs.Controls.Add(chkMaleSuit); y+=28;
-            Hint("décoché : dév. final mâle saisi (ex. Ø140 → Ø120)");
-            tDevM  = Field("Dév. final mâle (mm)", "645");
-            Hint("recouv. mâle compris · barème Ø120 = 403");
+            Hint("décoché : coude réducteur (ex. 200 → 160)");
+            tDiamM = Field("Ø voulu mâle (mm)", "160");
+            Hint("= mâle d'un coude de ce Ø (− réduction)");
             tRecF  = Field("Recouv. bout femelle (mm)", "20");
             tRecJ  = Field("Recouv. au joint (mm)", "25");
             tRecM  = Field("Recouv. bout mâle (mm)", "35");
@@ -202,13 +202,12 @@ namespace CoudeDev
             Recalc();
         }
 
-        // Mâle qui suit la femelle (défaut) : réduction saisie, dév. mâle affiché (grisé).
-        // Décoché : dév. final mâle saisi, la réduction en découle (grisée).
+        // Mâle au même Ø que la femelle (défaut) : le champ Ø mâle affiche le Ø femelle (grisé).
+        // Décoché : Ø mâle saisi (coude réducteur). La réduction X reste saisie dans les 2 cas
+        // (c'est le jeu d'emboîtement) et n'est jamais réécrite par le programme.
         void ApplyMale()
         {
-            bool suit = chkMaleSuit.Checked;
-            tRed.Enabled = suit;
-            tDevM.Enabled = !suit;
+            tDiamM.Enabled = !chkMaleSuit.Checked;
         }
 
         // Coude normal : bras ext. saisi. Coude contre coude : bras ext. calculé depuis le déport.
@@ -255,7 +254,7 @@ namespace CoudeDev
                    !TryD(tRed,out var red)||!TryD(tRecF,out var rf)||!TryD(tRecJ,out var rj)||!TryD(tRecM,out var rm)||
                    !TryD(tTol,out var tol)||!TryD(tTolMax,out var tolMax)||!TryD(tArcMini,out var amini)||
                    !TryD(tTrouD,out var trD)||!TryD(tTrouB,out var trB)||!TryD(tTrouP,out var trP)||
-                   !TryD(tDeport,out var dep)||!TryD(tEmbZ,out var embZ)||!TryD(tDevM,out var devM)) return;
+                   !TryD(tDeport,out var dep)||!TryD(tEmbZ,out var embZ)||!TryD(tDiamM,out var dM)) return;
                 int nb=int.TryParse(tNb.Text,out var n)?Math.Max(2,n):2;
                 int nd=int.TryParse(tNdiv.Text,out var x)?Math.Max(24,x):160;
                 int tr=int.TryParse(tTrac.Text,out var tt)?Math.Max(2,tt):12;
@@ -267,15 +266,13 @@ namespace CoudeDev
                     AlignFourreau=chkFourreau.Checked,
                     TrousRepere=chkTrous.Checked, TrouDiam=trD, TrouBord=trB, TrouPas=trP,
                     CoudeContreCoude=rbZ.Checked||rbS.Checked, ZUnePiece=rbS.Checked, Deport=dep, EmboitementZ=embZ,
-                    MaleSuitFemelle=chkMaleSuit.Checked, DevMaleFinal=devM };
+                    MaleSuitFemelle=chkMaleSuit.Checked, DiamMale=chkMaleSuit.Checked ? d : dM };
                 rbS.Text=$"En {2*nb-1} parties : S, élément central";
-                // le mâle suit la femelle : on affiche son dév. (grisé) -> point de départ si on décoche
-                // (et inversement, la réduction déduite du dév. saisi)
-                _majTexte=true;
-                try{
-                    if(_p.MaleSuitFemelle) tDevM.Text=ElbowGeometry.DevMale(_p).ToString("0.#",CultureInfo.InvariantCulture);
-                    else tRed.Text=ElbowGeometry.ReductionEff(_p).ToString("0.#",CultureInfo.InvariantCulture);
-                } finally { _majTexte=false; }
+                // mâle au même Ø : le champ Ø mâle (grisé) recopie le Ø femelle -> point de départ si on décoche
+                if(_p.MaleSuitFemelle){
+                    _majTexte=true;
+                    try{ tDiamM.Text=tDiam.Text; } finally { _majTexte=false; }
+                }
 
                 _err = ElbowGeometry.Validate(_p);
                 if (_err != null)
@@ -337,9 +334,9 @@ namespace CoudeDev
                     $"Onglet par joint : {alpha*180/Math.PI:0.##}°\n"+
                     $"Rayon cintrage (axe) : {ElbowGeometry.RayonAxe(_p):0} mm\n"+
                     $"Dév. femelle : {ElbowGeometry.DevFemelle(_p):0.0} mm ({src})\n"+
-                    $"Dév. mâle    : {ElbowGeometry.DevMale(_p):0.0} mm{(_p.MaleSuitFemelle?"":" (saisi)")}\n"+
+                    $"Dév. mâle    : {ElbowGeometry.DevMale(_p):0.0} mm{(_p.MaleSuitFemelle?"":$" (Ø{_p.DiamMale:0})")}\n"+
                     $"Ø réel F {cF/Math.PI:0.0}  →  Ø réel M {cM/Math.PI:0.0}\n"+
-                    $"Réduction : {ElbowGeometry.ReductionEff(_p):0.#} mm circ\n"+
+                    $"Réduction totale : {ElbowGeometry.ReductionEff(_p):0.#} mm circ\n"+
                     $"Écart aux onglets (cône) : {ecart:0.0} mm\n"+
                     $"Circ. corps F {cF:0.0} · M {cM:0.0} mm\n"+
                     $"Recouv. : F {rf:0} → joint {rj:0} → M {rm:0} mm\n"+
@@ -354,7 +351,12 @@ namespace CoudeDev
                     (_p.AlignFourreau && Math.Abs(rf-BaremeFourreaux.Recouvrement(d))>0.01
                         ? $"\n⚠ barème prévu avec recouv. F {BaremeFourreaux.Recouvrement(d):0} mm" : "");
                 if (ecartFort)
-                    lblInfo.Text += $"\n⚠ écart aux onglets {ecart:0.0} mm (grosse\n  réduction) : ajoute un élément.";
+                {
+                    var (nOk, eOk) = ElbowGeometry.ElementsPourEcart(_p, 5);
+                    lblInfo.Text += nOk > 0
+                        ? $"\n⚠ écart aux onglets {ecart:0.0} mm (grosse\n  réduction) : passe à {nOk} éléments\n  (écart {eOk:0.0} mm)."
+                        : $"\n⚠ écart aux onglets {ecart:0.0} mm (grosse\n  réduction) : ajoute des éléments.";
+                }
                 if (abaisse || trouFaux || ecartFort) lblInfo.ForeColor = Color.FromArgb(255,190,90);
                 preview.Invalidate();
             }
@@ -569,7 +571,9 @@ namespace CoudeDev
             using var bAcc=new SolidBrush(ACCENT); using var bGray=new SolidBrush(Color.Gray);
             g.DrawString(SIGN,fSign,bSign,20,8);
             g.DrawString("● P1 FEMELLE (Ø exact)",f,bFem,20,28);
-            g.DrawString("● P"+_gores.Count+" MÂLE (−"+ElbowGeometry.ReductionEff(_p).ToString("0")+"mm circ)",f,bMal,190,28);
+            g.DrawString("● P"+_gores.Count+" MÂLE "+(_p.MaleSuitFemelle
+                ? "(−"+_p.Reduction.ToString("0")+"mm circ)"
+                : "Ø"+_p.DiamMale.ToString("0")+" (Ø réel "+(ElbowGeometry.CircMale(_p)/Math.PI).ToString("0.#")+")"),f,bMal,190,28);
             g.DrawString($"Angle réel {_p.AngleReel:0.##}°  (déviation {_p.Deviation:0.##}°)",f,bAcc,20,48);
             if(_p.CoudeContreCoude)
                 g.DrawString(_p.ZUnePiece
