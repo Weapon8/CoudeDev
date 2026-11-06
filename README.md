@@ -36,14 +36,27 @@ Décochée : circonférence femelle = π·Ø exact (comportement v1.0/v1.1).
 - Contrôles : angle réel < 180°, onglet ≤ 75°, gorge positive (le bras ext. mini
   est indiqué si la longueur saisie est trop courte).
 
-## Contour machine : une ligne continue (pas de pas-à-pas)
-Le calque **DECOUPE** contient **un seul contour fermé** (LWPOLYLINE à bulges) :
-- bords courbes convertis en **chaîne d'arcs tangents** (biarcs G1) calés sur la courbe
-  exacte, écart ≤ 0,02 mm, **aucune cassure de tangente** entre arcs ;
+## Contour machine : peu d'arcs longs, aucune petite section (v1.3.1)
+Le calque **DECOUPE** contient **une seule entité** : un contour fermé (LWPOLYLINE à
+bulges). Les sommets à l'intérieur ne sont que les jonctions entre arcs (une courbe de
+coude n'est pas un cercle, elle ne tient pas en un seul arc) :
+- bords courbes convertis en **PEU d'arcs LONGS tangents** (G1, cassure ≤ 0,1°) calés
+  sur la courbe exacte, écart ≤ **Tolérance contour** (0,2 mm par défaut = dentelure
+  Metalix de l'atelier) ;
+- **aucun arc plus court que l'Arc mini** (20 mm par défaut = Ø du rond de grignotage).
+  Priorité à l'arc mini : si la courbe est trop cintrée (petit Ø, gros onglet), la
+  tolérance monte toute seule par paliers jusqu'à la **Tolérance maxi auto** (0,5 mm).
+  Si même là l'arc mini ne tient pas (ex. Ø60 à 90° en 2 éléments : 18,6 mm), c'est
+  signalé en orange : monter la tolérance maxi ou ajouter un élément ;
+- rayon de courbure mini du contour ≥ 28 mm sur toute la gamme testée (Ø60–Ø300) :
+  le rond de 20 passe partout, y compris dans les creux ;
 - seuls 4 vrais coins (les 4 angles de la pièce) ;
 - bord droit d'une extrémité = 1 seul arc (cône) ou 1 seule droite (cylindre).
-L'AutoPunch / Metalix grignote donc chaque bord d'un trait au lieu de traiter des
-centaines de petits segments en pas-à-pas (même format que TronconiqueDeporte).
+
+Avant (v1.2, écart 0,02 mm) : ~60 arcs de 10 mm par pièce sur un Ø200 à 2 éléments,
+trop courts pour Metalix (grignotage à reprendre arc par arc). Maintenant : 17–18 arcs,
+le plus court à 39 mm. Le découpage est choisi par programmation dynamique : le moins
+d'arcs possible, puis, à égalité, celui dont le plus court est le plus long.
 
 ## Recouvrement dégradé (pointage électro), intégré au contour
 La couture longitudinale court sur toute la hauteur du tube conique : l'agrafe passe

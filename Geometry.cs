@@ -47,6 +47,10 @@ namespace CoudeDev
         public V2 FlapF, FlapM;                      // bout de patte côté femelle / côté mâle
         public int ArcCount, LineCount;
         public double MaxKinkDeg;                    // plus grande cassure de tangente HORS des 4 coins (contrôle)
+        public double MinArcLen;                     // plus court tronçon des 2 bords courbes (mm)
+        public double MaxDev;                        // écart maxi mesuré contour / courbe exacte (mm)
+        public double ArcMiniApplique;               // arc mini réellement tenu (= ArcMini sauf si impossible)
+        public double TolAppliquee;                  // tolérance réellement utilisée (> TolArc si montée auto)
     }
 
     /// <summary>Bande 3D assemblée (bague femelle + bague mâle dans le repère du coude).</summary>
@@ -98,7 +102,16 @@ namespace CoudeDev
             public double RecBoutFemelle = 20;   // recouvrement au bout femelle (mm)
             public double RecJoint       = 25;   // recouvrement au joint (mm)
             public double RecBoutMale    = 35;   // recouvrement au bout mâle (mm)
-            public double TolArc         = 0.02; // écart maxi contour arcs / courbe exacte (mm)
+            /// <summary>Écart visé contour d'arcs / courbe exacte (mm). Calé sur la dentelure Metalix
+            /// (0,2 mm à l'atelier) : le contour ne s'écarte pas plus que les festons du grignotage.
+            /// L'ancien réglage 0,02 sortait ~60 arcs de 10 mm par pièce, que Metalix ne grignotait pas.</summary>
+            public double TolArc         = 0.2;
+            /// <summary>Écart MAXI accepté (mm) : si l'arc mini ne tient pas à TolArc (petit Ø, coude
+            /// serré), la tolérance monte toute seule par paliers jusqu'ici avant de raccourcir un arc.</summary>
+            public double TolArcMax      = 0.5;
+            /// <summary>Longueur MINI d'un arc du contour DECOUPE (mm) = Ø du rond de grignotage
+            /// (rond de 20 à l'atelier). Aucun arc plus court au DXF, pour que Metalix les grignote tous.</summary>
+            public double ArcMini        = 20;
 
             /// <summary>Déviation de l'axe = angle dont tourne le tube = 180 - angle réel.</summary>
             public double Deviation => 180.0 - AngleReel;
@@ -132,6 +145,9 @@ namespace CoudeDev
             if (!(CircFemelle(p) > 0.5 * Math.PI * p.Diametre)) return "Recouvrement femelle trop grand pour ce développé.";
             if (p.Reduction < 0 || p.Reduction >= CircFemelle(p) * 0.5) return "Réduction mâle hors limites.";
             if (!(p.LongueurBrasExt > 0)) return "Longueur bras ext. > 0.";
+            if (!(p.TolArc >= 0.01 && p.TolArc <= 2)) return "Tolérance contour : entre 0,01 et 2 mm.";
+            if (!(p.TolArcMax >= p.TolArc && p.TolArcMax <= 2)) return "Tolérance maxi : entre la tolérance contour et 2 mm.";
+            if (!(p.ArcMini >= 0 && p.ArcMini <= 500)) return "Arc mini : entre 0 et 500 mm.";
             double Rm = SolveRm(p);
             if (Rm <= RFem(p) + 0.5)
                 return $"Gorge nulle ou négative : bras ext. trop court.\nMini ≈ {BrasExtMini(p) + 1:0} mm pour ces réglages.";
@@ -323,9 +339,9 @@ namespace CoudeDev
                 // Contour fermé : bord femelle (0 -> bout de patte), bout de patte (droite),
                 // bord mâle à l'envers (bout de patte -> 0), couture d'origine (droite).
                 var cont = new List<BVertex>();
-                AppendCurve(cont, fT, tT, 0, thF, p.TolArc);
+                var stH = AppendCurve(cont, fT, tT, 0, thF, p.TolArc, p.TolArcMax, p.ArcMini);
                 cont.Add(new BVertex(fT(thF), 0));
-                AppendCurve(cont, fB, tB, thM, 0, p.TolArc);
+                var stB = AppendCurve(cont, fB, tB, thM, 0, p.TolArc, p.TolArcMax, p.ArcMini);
                 cont.Add(new BVertex(fB(0), 0));
 
                 // Zone de recouvrement (aperçu)
@@ -346,7 +362,11 @@ namespace CoudeDev
                     Contour = cont, ContourPts = Tessellate(cont).ToArray(), Flap = flap.ToArray(),
                     SeamF = F2[nd], SeamM = M2[nd], FlapF = fT(thF), FlapM = fB(thM),
                     ArcCount = arcs, LineCount = lines,
-                    MaxKinkDeg = MaxKink(cont)
+                    MaxKinkDeg = MaxKink(cont),
+                    MinArcLen = Math.Min(stH.MinLen, stB.MinLen),
+                    MaxDev = Math.Max(stH.MaxDev, stB.MaxDev),
+                    ArcMiniApplique = Math.Min(stH.UsedMin, stB.UsedMin),
+                    TolAppliquee = Math.Max(stH.UsedTol, stB.UsedTol)
                 });
             }
             return gores;
@@ -361,12 +381,12 @@ namespace CoudeDev
         }
 
         // Échantillonne une arête développée (courbe exacte + tangentes exactes) et la
-        // convertit en chaîne d'arcs tangents (biarcs G1). Ajoute les sommets de départ ;
-        // le point final est porté par le sommet suivant du contour.
-        static void AppendCurve(List<BVertex> outV, Func<double, V2> f, Func<double, V2> tf,
-                                double t0, double t1, double tol)
+        // convertit en PEU d'arcs LONGS tangents (ArcFit.FitLong) : aucun arc < arc mini.
+        // Ajoute les sommets de départ ; le point final est porté par le sommet suivant du contour.
+        static ArcFit.Stats AppendCurve(List<BVertex> outV, Func<double, V2> f, Func<double, V2> tf,
+                                        double t0, double t1, double tol, double tolMax, double arcMini)
         {
-            if (Math.Abs(t1 - t0) < 1e-12) return;
+            if (Math.Abs(t1 - t0) < 1e-12) return new ArcFit.Stats { MinLen = double.PositiveInfinity, UsedMin = arcMini, UsedTol = tol };
             const int NC = 256; double len = 0; V2 prev = f(t0);
             for (int i = 1; i <= NC; i++) { V2 q = f(t0 + (t1 - t0) * i / NC); len += (q - prev).Norm(); prev = q; }
             int n = (int)Math.Ceiling(len / 0.5);                 // 1 échantillon / 0,5 mm
@@ -378,10 +398,9 @@ namespace CoudeDev
                 double th = t0 + (t1 - t0) * i / n;
                 P[i] = f(th); T[i] = tf(th).Unit() * sgn;
             }
-            var loc = new List<BVertex>();
-            ArcFit.Fit(P, T, tol, loc);
-            ArcFit.Merge(loc, P[n]);
+            var loc = ArcFit.FitLong(P, T, tol, tolMax, arcMini, out var st);
             outV.AddRange(loc);
+            return st;
         }
 
         /// <summary>Discrétise un contour à bulges (fermé) pour l'aperçu / encombrement.</summary>
@@ -453,16 +472,295 @@ namespace CoudeDev
     }
 
     // ---------------------------------------------------------------------
-    //  ArcFit : courbe -> chaîne d'arcs TANGENTS (biarcs G1).
-    //  Chaque biarc part d'un point exact de la courbe avec sa tangente
-    //  exacte et arrive sur le suivant avec la sienne : aucune cassure entre
-    //  arcs, donc l'AutoPunch grignote d'un trait au lieu de faire du
-    //  pas-à-pas sur des centaines de petits segments.
-    //  Subdivision récursive tant que l'écart à la courbe > tol.
+    //  ArcFit : courbe -> chaîne d'arcs TANGENTS (G1).
+    //
+    //  FitLong (export DXF) : PEU d'arcs LONGS, AUCUN plus court que l'arc
+    //  mini. Programmation dynamique sur des nœuds pris sur la courbe exacte
+    //  (point + tangente exacte) : chaque saut nœud a -> nœud b est soit UN
+    //  arc (tangent aux deux bouts à KinkTolDeg près), soit un biarc (2 arcs
+    //  tangents entre eux). Un saut n'est accepté que si l'écart à la courbe
+    //  est ≤ tol ET si chaque arc fait ≥ arc mini. On garde le chemin qui a le
+    //  MOINS d'arcs, puis, à égalité, celui dont le plus court est le plus long.
+    //  => fini les dizaines de bouts de 10 mm que Metalix ne sait pas grignoter.
+    //
+    //  Fit (ancien, secours) : subdivision récursive en biarcs tant que
+    //  l'écart > tol. Ne sert plus que si FitLong échoue (jamais en pratique).
     // ---------------------------------------------------------------------
     public static class ArcFit
     {
-        const double MaxBulge = 0.41421356237;   // tan(22,5°) => arcs ≤ 90°
+        const double MaxBulge = 0.41421356237;   // tan(22,5°) => arcs ≤ 90° (ancien Fit)
+        const double MaxBulgeLong = 0.70020753821; // tan(35°) => arcs ≤ 140° (FitLong)
+        public const double KinkTolDeg = 0.1;    // cassure tolérée à un nœud pour un arc simple
+
+        public struct Stats
+        {
+            public double MinLen;    // plus court arc produit (mm)
+            public double MaxDev;    // écart maxi mesuré sur TOUS les échantillons (mm)
+            public double UsedMin;   // arc mini réellement tenu (abaissé seulement si impossible)
+            public double UsedTol;   // tolérance réellement utilisée (montée auto pour tenir l'arc mini)
+            public int Arcs;
+        }
+
+        // Arc (ou droite) prêt pour les mesures d'écart : centre, rayon, sens.
+        readonly struct ArcGeo
+        {
+            readonly V2 A, B, C; readonly double R; readonly int S; readonly bool Line;
+            public readonly double Len;
+            public ArcGeo(V2 a, V2 b, double bulge)
+            {
+                A = a; B = b;
+                double c = (b - a).Norm();
+                if (Math.Abs(bulge) < 1e-9) { Line = true; C = a; R = 0; S = 0; Len = c; return; }
+                Line = false;
+                Circle(a, b, bulge, out C, out R);
+                S = bulge > 0 ? 1 : -1;
+                double sw = Math.Abs(4 * Math.Atan(bulge));
+                Len = R * sw;
+            }
+            // Distance d'un point à l'arc (secteur testé par produits vectoriels : arcs < 180°).
+            public double Dist(V2 q)
+            {
+                if (Line) return DistSeg(q, A, B);
+                V2 qa = A - C, qq = q - C, qb = B - C;
+                if (S * V2.Cross(qa, qq) >= 0 && S * V2.Cross(qq, qb) >= 0)
+                    return Math.Abs(qq.Norm() - R);
+                return Math.Min((q - A).Norm(), (q - B).Norm());
+            }
+        }
+
+        /// <summary>
+        /// Courbe dense (P, T unitaires, pas ~0,5 mm) -> sommets à bulge du premier point à
+        /// l'avant-dernier tronçon (le point final est porté par le sommet suivant du contour).
+        /// Priorité à l'arc mini (= Ø du rond : en dessous Metalix saute l'arc) :
+        ///   1) on essaie à tol ; si l'arc mini ne tient pas, la tolérance monte par paliers
+        ///      (×1,25) jusqu'à tolMax ;
+        ///   2) si même à tolMax c'est impossible (petit Ø très cintré), on garde tolMax et on
+        ///      cherche le plus grand arc mini tenable (dichotomie). Valeurs rendues dans st.
+        /// </summary>
+        public static List<BVertex> FitLong(V2[] P, V2[] T, double tol, double tolMax, double minLen, out Stats st)
+        {
+            tol = Math.Max(0.005, tol);
+            tolMax = Math.Max(tol, tolMax);
+            minLen = Math.Max(0, minLen);
+            int n = P.Length - 1;
+            var res = new List<BVertex>();
+            st = new Stats { MinLen = double.PositiveInfinity, UsedMin = minLen, UsedTol = tol };
+            if (n < 1) return res;
+
+            // longueur cumulée le long de la courbe
+            var cum = new double[n + 1];
+            for (int i = 1; i <= n; i++) cum[i] = cum[i - 1] + (P[i] - P[i - 1]).Norm();
+            double len = cum[n];
+
+            // nœuds : ~1 tous les 2 mm (≤ 300 nœuds) ; contrôle d'écart ~ tous les 1 mm
+            double nodeStep = Math.Max(2.0, len / 300.0);
+            int m = Math.Max(1, (int)Math.Ceiling(len / nodeStep));
+            var idx = new int[m + 1];
+            for (int k = 0, i = 0; k <= m; k++)
+            {
+                double target = len * k / m;
+                while (i < n && cum[i] < target) i++;
+                idx[k] = (k == 0) ? 0 : (k == m) ? n : Math.Max(idx[k - 1] + 1, Math.Min(n - (m - k), i));
+            }
+            double h = len / n;
+            int stride = Math.Max(1, (int)Math.Round(nodeStep / 2 / Math.Max(1e-9, h)));
+
+            // 1) arc mini tenu : tolérance montée par paliers si besoin
+            double used = minLen, usedTol = tol;
+            List<BVertex>? path = null;
+            for (double t = tol; ; t = Math.Min(tolMax, t * 1.25))
+            {
+                path = Dp(P, T, cum, idx, stride, t, minLen);
+                usedTol = t;
+                if (path != null || t >= tolMax - 1e-12) break;
+            }
+
+            // 2) impossible même à tolMax : plus grand arc mini tenable (la faisabilité ne fait que
+            //    croître quand l'arc mini baisse -> dichotomie, ~0,3 mm près)
+            if (path == null)
+            {
+                double lo = 0, hi = minLen;
+                List<BVertex>? best = Dp(P, T, cum, idx, stride, usedTol, 0);
+                for (int it = 0; it < 7 && best != null; it++)
+                {
+                    double mid = (lo + hi) / 2;
+                    var trial = Dp(P, T, cum, idx, stride, usedTol, mid);
+                    if (trial != null) { lo = mid; best = trial; } else hi = mid;
+                }
+                path = best; used = lo;
+            }
+            if (path == null)
+            {   // secours (ne devrait jamais servir) : ancien découpage récursif
+                path = new List<BVertex>();
+                Fit(P, T, usedTol, path);
+                used = 0;
+            }
+            Merge(path, P[n]);
+
+            // contrôle final sur TOUS les échantillons : écart réel + plus court arc
+            st.UsedMin = used;
+            st.UsedTol = usedTol;
+            st.Arcs = path.Count;
+            int seg = 0;
+            double maxDev = 0, minArc = double.PositiveInfinity;
+            var geos = new ArcGeo[path.Count];
+            for (int k = 0; k < path.Count; k++)
+            {
+                V2 b = (k + 1 < path.Count) ? path[k + 1].P : P[n];
+                geos[k] = new ArcGeo(path[k].P, b, path[k].Bulge);
+                minArc = Math.Min(minArc, geos[k].Len);
+            }
+            for (int i = 0; i <= n; i++)
+            {
+                double d = double.PositiveInfinity;
+                // le point i est près du tronçon courant ou des voisins : fenêtre glissante
+                for (int k = Math.Max(0, seg - 1); k < Math.Min(path.Count, seg + 3); k++)
+                {
+                    double dk = geos[k].Dist(P[i]);
+                    if (dk < d) { d = dk; if (k > seg) seg = k; }
+                }
+                if (d > maxDev) maxDev = d;
+            }
+            st.MaxDev = maxDev;
+            st.MinLen = minArc;
+            return path;
+        }
+
+        // Programmation dynamique : moins d'arcs d'abord, puis plus long "plus court arc".
+        static List<BVertex>? Dp(V2[] P, V2[] T, double[] cum, int[] idx, int stride, double tol, double minLen)
+        {
+            int m = idx.Length - 1;
+            var cnt = new int[m + 1]; var bot = new double[m + 1]; var from = new int[m + 1];
+            var e1 = new BVertex[m + 1]; var e2 = new BVertex[m + 1]; var two = new bool[m + 1];
+            for (int k = 0; k <= m; k++) { cnt[k] = int.MaxValue; bot[k] = 0; from[k] = -1; }
+            cnt[0] = 0; bot[0] = double.PositiveInfinity;
+
+            double kinkTol = KinkTolDeg * Math.PI / 180.0;
+            double reachLim = 3 * tol;                        // au-delà, plus aucun saut ne tiendra
+            double[] ratios = { 1.0, 0.75, 1.0 / 0.75, 0.55, 1.0 / 0.55, 0.4, 1.0 / 0.4, 0.28, 1.0 / 0.28, 0.2, 5.0 };
+
+            // écart du biarc "d égaux" a -> b (infini si impossible) : mesure la portée depuis a
+            double Reach(int ia, int ib, double lim)
+            {
+                if (!Biarc(P[ia], T[ia], P[ib], T[ib], 1.0, out V2 J, out double c1, out double c2)
+                    || Math.Abs(c1) > MaxBulgeLong || Math.Abs(c2) > MaxBulgeLong) return double.PositiveInfinity;
+                return Err2(P, ia, ib, stride, new ArcGeo(P[ia], J, c1), new ArcGeo(J, P[ib], c2), lim);
+            }
+
+            for (int a = 0; a < m; a++)
+            {
+                if (cnt[a] == int.MaxValue) continue;
+                if (cnt[m] != int.MaxValue && cnt[a] + 1 > cnt[m]) continue;   // ne peut plus battre le meilleur
+                int ia = idx[a];
+
+                // 1) portée maxi depuis a (recherche exponentielle puis dichotomie)
+                int good = a, badB = -1, step = 1;
+                while (true)
+                {
+                    int b = Math.Min(m, a + step);
+                    if (Reach(ia, idx[b], reachLim) <= reachLim) { good = b; if (b == m) break; step *= 2; }
+                    else { badB = b; break; }
+                }
+                if (badB > 0)
+                    while (badB - good > 1)
+                    {
+                        int mid = (good + badB) / 2;
+                        if (Reach(ia, idx[mid], reachLim) <= reachLim) good = mid; else badB = mid;
+                    }
+                int bMax = Math.Max(a + 1, good);
+
+                // 2) sauts candidats a -> b (seulement là où ça peut améliorer le nœud b)
+                for (int b = a + 1; b <= bMax; b++)
+                {
+                    int ib = idx[b];
+                    double span = cum[ib] - cum[ia];
+                    if (span < minLen - 1e-9) continue;                        // même un arc seul serait trop court
+
+                    bool canOne = cnt[a] + 1 < cnt[b] || (cnt[a] + 1 == cnt[b] && Math.Min(bot[a], span * 1.02) > bot[b] + 1e-9);
+                    bool canTwo = span >= 2 * minLen - 1e-9 &&
+                                  (cnt[a] + 2 < cnt[b] || (cnt[a] + 2 == cnt[b] && Math.Min(bot[a], span * 0.51) > bot[b] + 1e-9));
+                    if (!canOne && !canTwo) continue;
+
+                    // --- 1 seul arc, tangent au départ, qui retombe sur la tangente d'arrivée ---
+                    if (canOne)
+                    {
+                        double bs = BulgeFromTangent(P[ia], T[ia], P[ib]);
+                        if (Math.Abs(bs) <= MaxBulgeLong)
+                        {
+                            V2 et = EndTangent(P[ia], P[ib], bs);
+                            double kink = Math.Abs(Math.Atan2(V2.Cross(et, T[ib]), V2.Dot(et, T[ib])));
+                            if (kink <= kinkTol)
+                            {
+                                var g = new ArcGeo(P[ia], P[ib], bs);
+                                if (g.Len >= minLen && Err1(P, ia, ib, stride, g, tol) <= tol)
+                                {
+                                    double nb = Math.Min(bot[a], g.Len);
+                                    if (cnt[a] + 1 < cnt[b] || (cnt[a] + 1 == cnt[b] && nb > bot[b] + 1e-9))
+                                    { cnt[b] = cnt[a] + 1; bot[b] = nb; from[b] = a; two[b] = false; e1[b] = new BVertex(P[ia], bs); }
+                                    continue;   // un arc seul bat toujours un biarc sur le même saut
+                                }
+                            }
+                        }
+                    }
+
+                    // --- biarc : plusieurs points de jonction essayés pour équilibrer les 2 arcs ---
+                    if (!canTwo) continue;
+                    double bestBot = -1; BVertex bv1 = default, bv2 = default;
+                    foreach (double r in ratios)
+                    {
+                        if (!Biarc(P[ia], T[ia], P[ib], T[ib], r, out V2 J, out double c1, out double c2)
+                            || Math.Abs(c1) > MaxBulgeLong || Math.Abs(c2) > MaxBulgeLong) continue;
+                        var g1 = new ArcGeo(P[ia], J, c1); var g2 = new ArcGeo(J, P[ib], c2);
+                        double lo = Math.Min(g1.Len, g2.Len);
+                        if (lo < minLen || lo <= bestBot) continue;
+                        if (Err2(P, ia, ib, stride, g1, g2, tol) > tol) continue;
+                        bestBot = lo; bv1 = new BVertex(P[ia], c1); bv2 = new BVertex(J, c2);
+                    }
+                    if (bestBot >= 0)
+                    {
+                        double nb = Math.Min(bot[a], bestBot);
+                        if (cnt[a] + 2 < cnt[b] || (cnt[a] + 2 == cnt[b] && nb > bot[b] + 1e-9))
+                        { cnt[b] = cnt[a] + 2; bot[b] = nb; from[b] = a; two[b] = true; e1[b] = bv1; e2[b] = bv2; }
+                    }
+                }
+            }
+            if (cnt[m] == int.MaxValue) return null;
+
+            var rev = new List<BVertex>();
+            for (int k = m; k > 0; k = from[k])
+            {
+                if (two[k]) { rev.Add(e2[k]); rev.Add(e1[k]); }
+                else rev.Add(e1[k]);
+            }
+            rev.Reverse();
+            return rev;
+        }
+
+        // Écart maxi des échantillons (pas = stride) à 1 arc ; sort dès qu'on dépasse lim.
+        static double Err1(V2[] P, int i0, int i1, int stride, in ArcGeo g, double lim)
+        {
+            double mx = 0;
+            for (int i = i0 + stride; i < i1; i += stride)
+            {
+                double d = g.Dist(P[i]);
+                if (d > mx) { mx = d; if (mx > lim) return mx; }
+            }
+            if (i1 - 1 > i0) mx = Math.Max(mx, g.Dist(P[i1 - 1]));
+            return mx;
+        }
+
+        // Idem pour un biarc (distance = la plus petite aux 2 arcs).
+        static double Err2(V2[] P, int i0, int i1, int stride, in ArcGeo g1, in ArcGeo g2, double lim)
+        {
+            double mx = 0;
+            for (int i = i0 + stride; i < i1; i += stride)
+            {
+                double d = Math.Min(g1.Dist(P[i]), g2.Dist(P[i]));
+                if (d > mx) { mx = d; if (mx > lim) return mx; }
+            }
+            if (i1 - 1 > i0) mx = Math.Max(mx, Math.Min(g1.Dist(P[i1 - 1]), g2.Dist(P[i1 - 1])));
+            return mx;
+        }
 
         public static void Fit(V2[] P, V2[] T, double tol, List<BVertex> outV)
         {
@@ -488,18 +786,23 @@ namespace CoudeDev
 
         // Biarc "d égaux" : P0 (tangente T0) -> J -> P1 (tangente T1), tangent en J.
         static bool Biarc(V2 p0, V2 t0, V2 p1, V2 t1, out V2 J, out double b1, out double b2)
+            => Biarc(p0, t0, p1, t1, 1.0, out J, out b1, out b2);
+
+        // Biarc général : d1 = r·d0 (r = 1 -> "d égaux"). r déplace le point de jonction J
+        // le long du bord : sert à équilibrer les 2 arcs pour qu'aucun ne soit trop court.
+        static bool Biarc(V2 p0, V2 t0, V2 p1, V2 t1, double r, out V2 J, out double b1, out double b2)
         {
             J = p0; b1 = b2 = 0;
-            V2 v = p1 - p0, t = t0 + t1;
-            double vv = V2.Dot(v, v), vt = V2.Dot(v, t), a = V2.Dot(t, t) - 4;   // a ≤ 0
+            V2 v = p1 - p0, w = t0 + t1 * r;
+            double vv = V2.Dot(v, v), vw = V2.Dot(v, w), a = V2.Dot(w, w) - (1 + r) * (1 + r);   // a ≤ 0
             if (vv < 1e-18) return false;
-            double disc = vt * vt - a * vv; if (disc < 0) return false;
-            double den = vt + Math.Sqrt(disc);
+            double disc = vw * vw - a * vv; if (disc < 0) return false;
+            double den = vw + Math.Sqrt(disc);
             if (den < 1e-12) return false;
-            double d = vv / den;                       // racine stable de a·d² - 2·vt·d + vv = 0
+            double d = vv / den;                       // racine stable de a·d² - 2·vw·d + vv = 0
             if (!(d > 0) || double.IsInfinity(d)) return false;
-            V2 q0 = p0 + t0 * d, q1 = p1 - t1 * d;
-            J = (q0 + q1) * 0.5;
+            V2 q0 = p0 + t0 * d, q1 = p1 - t1 * (r * d);
+            J = q0 + (q1 - q0) * (1.0 / (1 + r));
             V2 tJ = (q1 - q0).Unit();
             b1 = BulgeFromTangent(p0, t0, J);
             b2 = BulgeFromTangent(J, tJ, p1);

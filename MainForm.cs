@@ -26,7 +26,7 @@ namespace CoudeDev
         static readonly Color INK    = Color.FromArgb(18,21,27);     // texte sombre sur orange
         static readonly Color WARN   = Color.FromArgb(255,110,90);   // message d'erreur
 
-        TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecJ, tRecM;
+        TextBox tDiam, tRed, tAngle, tNb, tRatio, tNdiv, tTrac, tRecF, tRecJ, tRecM, tTol, tTolMax, tArcMini;
         CheckBox chkAnnot, chkFourreau;
         Button btn2D, btn3D;
         Label lblInfo;
@@ -34,6 +34,8 @@ namespace CoudeDev
         List<Band3D> _bands3d = new();
         ElbowGeometry.Params _p = new();
         string? _err;
+        // Recalcul différé : le lissage en arcs longs prend ~0,1–0,2 s, on attend la fin de la frappe.
+        readonly System.Windows.Forms.Timer _recalcTimer = new() { Interval = 220 };
 
         bool _show3D = false;
         double _yaw = 0.6, _pitch = 1.05;     // vue 3/4 montrant le cintrage
@@ -97,7 +99,7 @@ namespace CoudeDev
             TextBox Field(string lbl,string val){
                 var l=new Label{Text=lbl,Left=12,Top=y+3,Width=150,ForeColor=FG}; inputs.Controls.Add(l);
                 var t=new TextBox{Left=168,Top=y,Width=110,Text=val,BackColor=INPUT,ForeColor=Color.White,BorderStyle=BorderStyle.FixedSingle};
-                t.TextChanged+=(s,e)=>Recalc(); inputs.Controls.Add(t); y+=30; return t;
+                t.TextChanged+=(s,e)=>{ _recalcTimer.Stop(); _recalcTimer.Start(); }; inputs.Controls.Add(t); y+=30; return t;
             }
 
             Header("GÉOMÉTRIE DU COUDE");
@@ -110,7 +112,7 @@ namespace CoudeDev
             Header("EMBOÎTEMENT");
             chkFourreau = new CheckBox{ Text="Dév. femelle = barème fourreaux", Left=12, Top=y, Width=276, Height=22,
                 ForeColor=FG, Checked=true };
-            chkFourreau.CheckedChanged+=(s,e)=>Recalc();
+            chkFourreau.CheckedChanged+=(s,e)=>{ _recalcTimer.Stop(); Recalc(); };
             inputs.Controls.Add(chkFourreau); y+=28;
             Hint("Ø200 → 655 recouv. compris (comme ep-fourreaux)");
             tRed   = Field("Réduction mâle (mm circ)", "25");
@@ -121,6 +123,12 @@ namespace CoudeDev
             Header("DÉVELOPPÉ / DXF");
             tNdiv  = Field("Divisions développé", "160");
             tTrac  = Field("Nb génératrices tracées", "12");
+            tTol     = Field("Tolérance contour (mm)", "0.2");
+            Hint("= dentelure Metalix");
+            tTolMax  = Field("Tolérance maxi auto (mm)", "0.5");
+            Hint("montée auto si l'arc mini ne tient pas");
+            tArcMini = Field("Arc mini = Ø rond (mm)", "20");
+            Hint("aucun arc plus court que le poinçon");
             chkAnnot = new CheckBox{ Text="DXF : + traçage / repères / textes", Left=12, Top=y, Width=276, Height=22,
                 ForeColor=FG, Checked=false };
             inputs.Controls.Add(chkAnnot); y+=28;
@@ -136,13 +144,14 @@ namespace CoudeDev
             btnGen.Click+=Generate; inputs.Controls.Add(btnGen);
             y+=46;
 
-            lblInfo=new Label{Left=12,Top=y,Width=276,Height=200,ForeColor=FG,Font=new Font("Consolas",8.5f)};
+            lblInfo=new Label{Left=12,Top=y,Width=276,Height=290,ForeColor=FG,Font=new Font("Consolas",8.5f)};
             inputs.Controls.Add(lblInfo);
 
-            var lblSign=new Label{Left=12,Top=y+204,Width=280,Height=20,Text=SIGN,
+            var lblSign=new Label{Left=12,Top=y+294,Width=280,Height=20,Text=SIGN,
                 ForeColor=Color.FromArgb(140,140,145),Font=new Font("Segoe UI",8.5f,FontStyle.Italic|FontStyle.Bold)};
             inputs.Controls.Add(lblSign);
 
+            _recalcTimer.Tick += (s,e)=>{ _recalcTimer.Stop(); Recalc(); };
             ResumeLayout(false);
             SetView(false);
             Recalc();
@@ -180,7 +189,8 @@ namespace CoudeDev
             try
             {
                 if(!TryD(tDiam,out var d)||!TryD(tAngle,out var a)||!TryD(tRatio,out var r)||
-                   !TryD(tRed,out var red)||!TryD(tRecF,out var rf)||!TryD(tRecJ,out var rj)||!TryD(tRecM,out var rm)) return;
+                   !TryD(tRed,out var red)||!TryD(tRecF,out var rf)||!TryD(tRecJ,out var rj)||!TryD(tRecM,out var rm)||
+                   !TryD(tTol,out var tol)||!TryD(tTolMax,out var tolMax)||!TryD(tArcMini,out var amini)) return;
                 int nb=int.TryParse(tNb.Text,out var n)?Math.Max(2,n):2;
                 int nd=int.TryParse(tNdiv.Text,out var x)?Math.Max(24,x):160;
                 int tr=int.TryParse(tTrac.Text,out var tt)?Math.Max(2,tt):12;
@@ -188,6 +198,7 @@ namespace CoudeDev
                     Diametre=d, AngleReel=a, NbSegments=nb, LongueurBrasExt=r,
                     Reduction=red, NdivDev=nd, NbTracage=tr,
                     RecBoutFemelle=rf, RecJoint=rj, RecBoutMale=rm,
+                    TolArc=tol, TolArcMax=tolMax, ArcMini=amini,
                     AlignFourreau=chkFourreau.Checked };
 
                 _err = ElbowGeometry.Validate(_p);
@@ -207,8 +218,11 @@ namespace CoudeDev
                 double cF=ElbowGeometry.CircFemelle(_p), cM=ElbowGeometry.CircMale(_p);
                 BaremeFourreaux.Dev(d, out bool exact);
                 string src=_p.AlignFourreau ? (exact?"barème ✔":"π·Ø+"+BaremeFourreaux.JointK(d).ToString("0.0")) : "π·Ø+recouv.";
-                int amin=int.MaxValue, amax=0; double kink=0;
-                foreach(var g in _gores){ amin=Math.Min(amin,g.ArcCount); amax=Math.Max(amax,g.ArcCount); kink=Math.Max(kink,g.MaxKinkDeg); }
+                int amin=int.MaxValue, amax=0; double kink=0, lmin=double.MaxValue, dev=0, tenu=double.MaxValue, tolU=0;
+                foreach(var g in _gores){ amin=Math.Min(amin,g.ArcCount); amax=Math.Max(amax,g.ArcCount); kink=Math.Max(kink,g.MaxKinkDeg);
+                    lmin=Math.Min(lmin,g.MinArcLen); dev=Math.Max(dev,g.MaxDev); tenu=Math.Min(tenu,g.ArcMiniApplique); tolU=Math.Max(tolU,g.TolAppliquee); }
+                bool abaisse = tenu < amini - 0.01;
+                bool montee  = tolU > tol + 1e-6;
                 lblInfo.ForeColor = FG;
                 lblInfo.Text =
                     $"Angle réel : {a:0.##}°  →  déviation {_p.Deviation:0.##}°\n"+
@@ -220,10 +234,14 @@ namespace CoudeDev
                     $"Circ. corps F {cF:0.0} · M {cM:0.0} mm\n"+
                     $"Recouv. : F {rf:0} → joint {rj:0} → M {rm:0} mm\n"+
                     $"Contour DXF : {(amin==amax?amin.ToString():amin+"–"+amax)} arcs/pièce\n"+
-                    $"  tangents (cassure {kink:0.###}°), 4 coins\n"+
+                    $"  plus court {lmin:0} mm · écart ≤ {dev:0.00} mm\n"+
+                    $"  tangents (cassure {kink:0.##}°), 4 coins\n"+
                     $"Export : {_gores.Count} DXF (P1 femelle → P{_gores.Count} mâle)"+
+                    (montee && !abaisse ? $"\n• tolérance montée à {tolU:0.##} mm\n  pour tenir l'arc mini {amini:0} mm" : "")+
+                    (abaisse ? $"\n⚠ arc mini {amini:0} impossible même à\n  {tolU:0.##} mm → plus court {lmin:0} mm.\n  Monte la tolérance maxi ou ajoute\n  un élément." : "")+
                     (_p.AlignFourreau && Math.Abs(rf-BaremeFourreaux.Recouvrement(d))>0.01
                         ? $"\n⚠ barème prévu avec recouv. F {BaremeFourreaux.Recouvrement(d):0} mm" : "");
+                if (abaisse) lblInfo.ForeColor = Color.FromArgb(255,190,90);
                 preview.Invalidate();
             }
             catch { }
@@ -320,7 +338,7 @@ namespace CoudeDev
                 // titre + encombrement + superficie
                 string dev = go.Tag=="FEMELLE" ? $"dév. bord femelle {go.DevHaut:0.#} mm    —    "
                            : go.Tag=="MALE"    ? $"dév. bord mâle {go.DevBas:0.#} mm    —    " : "";
-                g.DrawString($"P{go.PartNo}  {go.Name}    —    {dev}encombr. {w:0} × {h:0} ({w*h/1e6:0.00} m²)    —    {go.ArcCount} arcs",
+                g.DrawString($"P{go.PartNo}  {go.Name}    —    {dev}encombr. {w:0} × {h:0} ({w*h/1e6:0.00} m²)    —    {go.ArcCount} arcs, plus court {go.MinArcLen:0} mm",
                     fnt,br,LEFT,(float)cy);
 
                 // cotes extérieures (encombrement recouvrement inclus)
@@ -412,6 +430,7 @@ namespace CoudeDev
 
         void Generate(object? sender, EventArgs e)
         {
+            _recalcTimer.Stop();
             Recalc();
             if(_gores.Count==0){
                 MessageBox.Show(_err ?? "Paramètres invalides.","CoudeDev",MessageBoxButtons.OK,MessageBoxIcon.Warning);
