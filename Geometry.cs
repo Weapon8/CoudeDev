@@ -884,6 +884,50 @@ namespace CoudeDev
         const double MaxBulgeLong = 0.70020753821; // tan(35°) => arcs ≤ 140° (FitLong)
         public const double KinkTolDeg = 0.1;    // cassure tolérée à un nœud pour un arc simple
 
+        /// <summary>Balayage MINI d'un arc écrit au DXF (degrés). En dessous, l'arc est "quasi plat"
+        /// (point d'inflexion de l'onglet : rayon de plusieurs centaines de mètres) et il est écrit
+        /// en DROITE. cncKad / Metalix v24 lit un tel arc comme un CERCLE COMPLET de ce rayon :
+        /// Ø160 à 135° en 2 éléments, P1 femelle -> arc de 0,008° (R 390 m), aperçu cncKad
+        /// = rond de 781 450 mm. Une droite à la place ajoute une cassure ≤ balayage/2 (≤ 0,05°).</summary>
+        public const double MinSweepDeg = 0.1;
+        /// <summary>Flèche maxi (mm) d'un arc quasi plat remplacé par UNE droite ; au-delà (arc plat
+        /// mais très long, ex. bout de cône quasi cylindrique) il est remplacé par plusieurs droites.</summary>
+        public const double FlatMaxFleche = 0.02;
+        static readonly double FlatBulge = Math.Tan(MinSweepDeg * Math.PI / 180.0 / 4.0);
+
+        /// <summary>true si le bulge est non nul mais l'arc trop plat pour la FAO (balayage &lt; MinSweepDeg).</summary>
+        public static bool IsFlat(double bulge) => bulge != 0 && Math.Abs(bulge) < FlatBulge;
+
+        /// <summary>Remplace les arcs quasi plats par des droites (1 seule si flèche ≤ FlatMaxFleche,
+        /// sinon N cordes posées sur l'arc, jamais plus courtes que l'arc mini).</summary>
+        public static int Flatten(List<BVertex> v, V2 end, double minLen)
+        {
+            int count = 0;
+            for (int k = v.Count - 1; k >= 0; k--)
+            {
+                double bu = v[k].Bulge;
+                if (!IsFlat(bu)) continue;
+                count++;
+                V2 a = v[k].P, b = (k + 1 < v.Count) ? v[k + 1].P : end;
+                double c = (b - a).Norm();
+                double fl = Math.Abs(bu) * c / 2;                                  // flèche de l'arc
+                int ns = Math.Max(1, (int)Math.Ceiling(Math.Sqrt(fl / FlatMaxFleche)));
+                if (minLen > 0) ns = Math.Min(ns, Math.Max(1, (int)Math.Floor(c / minLen)));
+                if (ns == 1) { v[k] = new BVertex(a, 0); continue; }
+                Circle(a, b, bu, out V2 C, out double R);
+                double a0 = Math.Atan2(a.Y - C.Y, a.X - C.X), sw = 4 * Math.Atan(bu);
+                var rep = new List<BVertex>(ns) { new BVertex(a, 0) };
+                for (int j = 1; j < ns; j++)
+                {
+                    double an = a0 + sw * j / ns;
+                    rep.Add(new BVertex(new V2(C.X + R * Math.Cos(an), C.Y + R * Math.Sin(an)), 0));
+                }
+                v.RemoveAt(k);
+                v.InsertRange(k, rep);
+            }
+            return count;
+        }
+
         public struct Stats
         {
             public double MinLen;    // plus court arc produit (mm)
@@ -891,6 +935,7 @@ namespace CoudeDev
             public double UsedMin;   // arc mini réellement tenu (abaissé seulement si impossible)
             public double UsedTol;   // tolérance réellement utilisée (montée auto pour tenir l'arc mini)
             public int Arcs;
+            public int Flats;        // arcs quasi plats écrits en droite (balayage < MinSweepDeg)
         }
 
         // Arc (ou droite) prêt pour les mesures d'écart : centre, rayon, sens.
@@ -988,6 +1033,8 @@ namespace CoudeDev
                 used = 0;
             }
             Merge(path, P[n]);
+            // zones quasi plates (inflexion de l'onglet) : droite au lieu d'un arc de R énorme
+            st.Flats = Flatten(path, P[n], used);
 
             // contrôle final sur TOUS les échantillons : écart réel + plus court arc
             st.UsedMin = used;

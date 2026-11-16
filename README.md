@@ -58,6 +58,20 @@ trop courts pour Metalix (grignotage à reprendre arc par arc). Maintenant : 17�
 le plus court à 39 mm. Le découpage est choisi par programmation dynamique : le moins
 d'arcs possible, puis, à égalité, celui dont le plus court est le plus long.
 
+### Zones plates : droite au lieu d'un arc de rayon énorme (v1.4.1)
+Au point d'inflexion de la courbe d'onglet (là où elle passe de creux à bosse), le bord
+est presque droit : l'ajustement pouvait y poser un arc de **plusieurs centaines de
+mètres de rayon**. cncKad / Metalix v24 lit un tel arc comme un **cercle complet** de ce
+rayon : Ø160 à 135° en 2 éléments, P1 femelle → arc de R 390 725 mm (balayage 0,008°),
+aperçu cncKad = rond de 781 450 × 781 450 mm, pièce inutilisable (le mâle passait).
+Ça touchait environ 1 coude sur 6 sur la gamme testée (Ø80–Ø400, 90°–165°, 2–3 éléments).
+
+Maintenant, tout arc de balayage **< 0,1°** est écrit en **droite** (une seule si sa flèche
+≤ 0,02 mm, sinon plusieurs cordes posées sur l'arc, jamais plus courtes que l'arc mini).
+Écart ajouté ≈ 0,001 mm, cassure ≤ 0,05° : le contour reste une seule entité, lisse.
+Garde-fou en plus à l'écriture DXF : aucun bulge « quasi plat » ne sort, et les bulges
+sont écrits avec 14 décimales (au lieu de 10).
+
 ## Recouvrement dégradé (pointage électro), intégré au contour
 La couture longitudinale court sur toute la hauteur du tube conique : l'agrafe passe
 linéairement de **recouvrement femelle** (grand Ø) à **recouvrement mâle** (petit Ø).

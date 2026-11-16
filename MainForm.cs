@@ -291,8 +291,9 @@ namespace CoudeDev
                 double cF=ElbowGeometry.CircFemelle(_p), cM=ElbowGeometry.CircMale(_p);
                 BaremeFourreaux.Dev(d, out bool exact);
                 string src=_p.AlignFourreau ? (exact?"barème ✔":"π·Ø+"+BaremeFourreaux.JointK(d).ToString("0.0")) : "π·Ø+recouv.";
-                int amin=int.MaxValue, amax=0; double kink=0, lmin=double.MaxValue, dev=0, tenu=double.MaxValue, tolU=0;
+                int amin=int.MaxValue, amax=0, dmax=0; double kink=0, lmin=double.MaxValue, dev=0, tenu=double.MaxValue, tolU=0;
                 foreach(var g in _gores){ amin=Math.Min(amin,g.ArcCount); amax=Math.Max(amax,g.ArcCount); kink=Math.Max(kink,g.MaxKinkDeg);
+                    dmax=Math.Max(dmax,g.LineCount-2);   // droites hors bout de patte + couture = zones plates
                     lmin=Math.Min(lmin,g.MinArcLen); dev=Math.Max(dev,g.MaxDev); tenu=Math.Min(tenu,g.ArcMiniApplique); tolU=Math.Max(tolU,g.TolAppliquee); }
                 bool abaisse = tenu < amini - 0.01;
                 bool montee  = tolU > tol + 1e-6;
@@ -341,6 +342,7 @@ namespace CoudeDev
                     $"Circ. corps F {cF:0.0} · M {cM:0.0} mm\n"+
                     $"Recouv. : F {rf:0} → joint {rj:0} → M {rm:0} mm\n"+
                     $"Contour DXF : {(amin==amax?amin.ToString():amin+"–"+amax)} arcs/pièce\n"+
+                    (dmax>0 ? $"  + {dmax} droite{(dmax>1?"s":"")} (zone plate)\n" : "")+
                     $"  plus court {lmin:0} mm · écart ≤ {dev:0.00} mm\n"+
                     $"  tangents (cassure {kink:0.##}°), 4 coins\n"+
                     $"Export : {_gores.Count} DXF (P1 femelle → P{_gores.Count} mâle)"+
@@ -466,7 +468,7 @@ namespace CoudeDev
                 // titre + encombrement + superficie
                 string dev = go.Tag=="FEMELLE" ? $"dév. bord femelle {go.DevHaut:0.#} mm    —    "
                            : go.Tag=="MALE"    ? $"dév. bord mâle {go.DevBas:0.#} mm    —    " : "";
-                g.DrawString($"P{go.PartNo}  {go.Name}{(go.Qty>1?$"  ×{go.Qty}":"")}    —    {dev}encombr. {w:0} × {h:0} ({w*h/1e6:0.00} m²)    —    {go.ArcCount} arcs, plus court {go.MinArcLen:0} mm",
+                g.DrawString($"P{go.PartNo}  {go.Name}{(go.Qty>1?$"  ×{go.Qty}":"")}    —    {dev}encombr. {w:0} × {h:0} ({w*h/1e6:0.00} m²)    —    {go.ArcCount} arcs{(go.LineCount>2?$" + {go.LineCount-2} droite{(go.LineCount>3?"s":"")}":"")}, plus court {go.MinArcLen:0} mm",
                     fnt,br,LEFT,(float)cy);
 
                 // cotes extérieures (encombrement recouvrement inclus)
